@@ -358,6 +358,20 @@ body::before {
 }
 .config-zones .zone-header .count.warn { color:#e74c3c; }
 .config-zones .zone-header .count.ok { color:#4caf50; }
+/* 编码输入 */
+.hex-input-row { display:flex; gap:6px; margin-bottom:8px; }
+.hex-input-row input {
+  flex:1; padding:6px 10px; border-radius:6px; border:1px solid var(--panel-border);
+  background:rgba(0,0,0,0.4); color:var(--text); font-size:0.8rem;
+  font-family:monospace; outline:none;
+}
+.hex-input-row input:focus { border-color:var(--gold); }
+.hex-input-row button {
+  padding:6px 14px; border-radius:6px; border:1px solid var(--gold);
+  background:rgba(212,168,67,0.15); color:var(--gold); cursor:pointer;
+  font-size:0.8rem; white-space:nowrap;
+}
+.hex-input-row button:hover { background:rgba(212,168,67,0.3); }
 .config-zones .zone-cards { display:flex; flex-wrap:wrap; gap:5px; align-content:flex-start; flex:1; }
 .config-zones .zone-cards .pcard {
   width:28px; height:42px; border-radius:3px; cursor:pointer; position:relative;
@@ -494,6 +508,10 @@ body::before {
            ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropCard(event)"
            onclick="assignToPlayer(0)">
         <div class="zone-header"><span>🟢 玩家 1（我）</span><span class="count" id="pcount0">0 / 27</span></div>
+        <div class="hex-input-row">
+          <input type="text" id="hexInput" placeholder="粘贴编码，如 0x11,0x22,0x33..." />
+          <button onclick="applyHex(0)">📥 导入编码</button>
+        </div>
         <div class="zone-cards" id="pcards0"></div>
       </div>
       <div class="player-zone" id="pzone1" data-player="1"
@@ -1085,6 +1103,42 @@ function updateSummary() {
   if (left > 0) html += ` <span class="err">未完成</span>`;
   else html += ' <span style="color:#4caf50">✓ 完成</span>';
   el.innerHTML = html;
+}
+
+// ── 编码导入 ──
+const HEX_SUIT = { '1':'D', '2':'C', '3':'H', '4':'S', '5':'X' };
+const HEX_RANK = { '1':'A','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','A':'10','B':'J','C':'Q','D':'K','E':'SJ','F':'BJ' };
+
+function applyHex(playerIdx) {
+  const raw = document.getElementById('hexInput').value.trim();
+  if (!raw) { showToast('请粘贴编码'); return; }
+  // 提取所有 0x?? 或 ?? 两位十六进制
+  const tokens = raw.match(/(?:0x)?([0-9A-Fa-f]{2})/g);
+  if (!tokens) { showToast('未识别到有效编码'); return; }
+  const used = getAllAssigned();
+  const avail = deckCards.filter(c => !used.has(c.cid));
+  const pool = [...avail]; // mutable copy
+  const matched = [];
+  for (const tok of tokens) {
+    const hex = tok.replace(/^0x/i, '').toUpperCase();
+    const suitCode = hex[0]; const rankCode = hex[1];
+    const suit = HEX_SUIT[suitCode]; const rank = HEX_RANK[rankCode];
+    if (!suit || !rank) { showToast(`无效编码: ${tok}`); continue; }
+    const idx = pool.findIndex(c => c.suit === suit && c.rank === rank);
+    if (idx === -1) { showToast(`牌库中无匹配: ${suit}${rank}`); continue; }
+    matched.push(pool[idx].cid);
+    pool.splice(idx, 1);
+  }
+  if (matched.length === 0) return;
+  // 检查容量
+  const cur = playerAssign[playerIdx].length;
+  const room = 27 - cur;
+  const toAdd = matched.slice(0, room);
+  if (matched.length > room) showToast(`超出容量，仅导入前 ${room} 张`);
+  for (const cid of toAdd) {
+    assignCard(cid, playerIdx);
+  }
+  showToast(`已导入 ${toAdd.length} 张牌`);
 }
 
 function randomAssign() {
