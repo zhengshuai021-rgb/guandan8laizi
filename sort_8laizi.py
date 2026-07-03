@@ -1158,6 +1158,32 @@ def cards_to_json(cards: list) -> list:
     } for c in cards]
 
 
+# 花色 → 编码: ♦=1, ♣=2, ♥=3, ♠=4, ☆★=5
+SUIT_CODE = {"D": 1, "C": 2, "H": 3, "S": 4, "SJ": 5, "BJ": 5}
+# 牌值 → 编码: A=1, 2=2, ..., 9=9, 10=A(10), J=B(11), Q=C(12), K=D(13), 小王=E(14), 大王=F(15)
+RANK_HEX = {
+    "A": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
+    "10": 0xA, "J": 0xB, "Q": 0xC, "K": 0xD, "SJ": 0xE, "BJ": 0xF
+}
+
+
+def card_to_hex(c) -> str:
+    """单张牌 → 两位十六进制编码 (花色牌值)"""
+    if c.rank in ("SJ", "BJ"):
+        color = SUIT_CODE[c.rank]
+    else:
+        color = SUIT_CODE.get(c.suit, 0)
+    value = RANK_HEX.get(c.rank, 0)
+    if color == 0 or value == 0:
+        return "00"
+    return f"0x{color:X}{value:X}"
+
+
+def cards_to_hex(cards: list) -> str:
+    """手牌列表 → 逗号分隔的十六进制编码字符串"""
+    return ",".join(card_to_hex(c) for c in cards)
+
+
 # ================================================================
 #  构建手牌（仅供测试用例使用）
 # ================================================================

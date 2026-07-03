@@ -247,6 +247,24 @@ body::before {
 .stat-mid { background:rgba(255,193,7,0.2); color:#ffd54f; }
 .stat-low { background:rgba(244,67,54,0.2); color:#ef9a9a; }
 
+/* ── 分页 ── */
+.pagination {
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  margin-top:12px; padding:8px 0;
+}
+.pagination button {
+  background:rgba(255,255,255,0.08); border:1px solid rgba(212,168,67,0.25);
+  color:var(--text-dim); border-radius:4px; padding:4px 10px;
+  font-size:0.78rem; cursor:pointer; transition:all 0.2s;
+}
+.pagination button:hover { background:rgba(212,168,67,0.15); color:var(--gold-light); }
+.pagination button.active {
+  background:rgba(212,168,67,0.2); border-color:var(--gold);
+  color:var(--gold-light); font-weight:600;
+}
+.pagination button:disabled { opacity:0.35; cursor:default; }
+.pagination .page-info { color:var(--text-dim); font-size:0.75rem; margin:0 4px; }
+
 /* ── Loading ── */
 .loading { display:none; text-align:center; padding:40px; }
 .loading.active { display:block; }
@@ -265,6 +283,30 @@ body::before {
   opacity:0; transition:opacity 0.3s; pointer-events:none;
 }
 .toast.show { opacity:1; }
+
+/* ── 编码展示 ── */
+.hex-box {
+  margin-top:12px; display:flex; align-items:center; gap:10px;
+  background:rgba(0,0,0,0.4); border-radius:6px; padding:8px 12px;
+  border:1px solid rgba(212,168,67,0.2);
+}
+.hex-label {
+  color:var(--gold-light); font-size:0.75rem; white-space:nowrap;
+  opacity:0.8;
+}
+.hex-text {
+  flex:1; font-family:'Courier New',monospace; font-size:0.7rem;
+  color:rgba(255,255,255,0.7); word-break:break-all;
+  line-height:1.5;
+}
+.hex-copy {
+  background:rgba(212,168,67,0.15); border:1px solid rgba(212,168,67,0.35);
+  color:var(--gold-light); border-radius:4px; padding:2px 10px;
+  font-size:0.7rem; cursor:pointer; white-space:nowrap;
+  transition:all 0.2s;
+}
+.hex-copy:hover { background:rgba(212,168,67,0.3); }
+.hex-copy.copied { color:#4caf50; border-color:#4caf50; }
 
 /* ── 配牌弹窗 ── */
 .config-overlay { display:none; position:fixed; inset:0; z-index:1000;
@@ -390,11 +432,21 @@ body::before {
   <div class="card-row" id="handDisplay">
     <span style="color:var(--text-dim);font-size:0.9rem">点击「发牌」开始</span>
   </div>
+  <div class="hex-box" id="handHexBox" style="display:none">
+    <span class="hex-label">🔢 编码</span>
+    <span class="hex-text" id="handHexText"></span>
+    <button class="hex-copy" onclick="copyHex('handHexText', this)">复制</button>
+  </div>
 
   <!-- Sorted zones -->
   <div id="zonesContainer" style="display:none">
     <div class="section-title">📐 最优理牌结果</div>
     <div class="zones" id="zones"></div>
+    <div class="hex-box" id="sortHexBox">
+      <span class="hex-label">🔢 编码</span>
+      <span class="hex-text" id="sortHexText"></span>
+      <button class="hex-copy" onclick="copyHex('sortHexText', this)">复制</button>
+    </div>
   </div>
 
   <!-- Strategy comparison table -->
@@ -417,6 +469,7 @@ body::before {
           <tbody id="stratBody"></tbody>
         </table>
       </div>
+      <div class="pagination" id="stratPagination" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -522,6 +575,18 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2000);
 }
 
+// ── 复制编码 ──
+function copyHex(elementId, btn) {
+  const text = document.getElementById(elementId).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '已复制';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+  }).catch(() => {
+    showToast('复制失败，请手动复制');
+  });
+}
+
 // ── Deal ──
 async function doDeal() {
   document.getElementById('btnDeal').disabled = true;
@@ -532,7 +597,7 @@ async function doDeal() {
   document.getElementById('btnSort').disabled = true;
 
   try {
-    const resp = await fetch('/api/deal', {
+    const resp = await fetch('api/deal', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ level: '2' })
     });
@@ -547,6 +612,13 @@ async function doDeal() {
 
     renderHand(data.hand);
     document.getElementById('btnSort').disabled = false;
+    
+    // 显示编码
+    if (data.hand_hex) {
+      document.getElementById('handHexText').textContent = data.hand_hex;
+      document.getElementById('handHexBox').style.display = 'flex';
+    }
+    
     showToast(`发牌完成！${data.wild_count}张癞子 / 27张手牌`);
   } catch(e) {
     showToast('发牌失败: ' + e.message);
@@ -608,7 +680,7 @@ async function doSort() {
   document.getElementById('stratsContainer').style.display = 'none';
 
   try {
-    const resp = await fetch('/api/sort', {
+    const resp = await fetch('api/sort', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ cards: currentHand })
     });
@@ -619,6 +691,17 @@ async function doSort() {
 
     document.getElementById('zonesContainer').style.display = 'block';
     document.getElementById('stratsContainer').style.display = 'block';
+
+    // 生成最优结果的编码（按 zones 排列顺序）
+    let allHex = [];
+    const zoneOrder = ['bombs','notsort','sortR'];
+    zoneOrder.forEach(zn => {
+      (sortResult.zones[zn] || []).forEach(g => {
+        if (g.cards_hex) allHex.push(g.cards_hex);
+      });
+    });
+    document.getElementById('sortHexText').textContent = allHex.join(',');
+
     document.getElementById('infoStrats').textContent = sortResult.all_results.length;
     const best = sortResult.all_results[0];
     document.getElementById('infoBestSingles').textContent = best.stats.single;
@@ -692,39 +775,80 @@ function renderZones(zones) {
 }
 
 // ── Render strategy table ──
+let stratsPage = 0;
+const STRATS_PER_PAGE = 20;
+
 function renderStrats(results, bestIdx) {
   const tbody = document.getElementById('stratBody');
-  tbody.innerHTML = '';
+  const pagination = document.getElementById('stratPagination');
 
-  results.forEach((r, i) => {
-    const s = r.stats;
-    const isBest = (i === bestIdx);
-    const tr = document.createElement('tr');
-    if (isBest) tr.className = 'best-row';
+  function renderPage(page) {
+    stratsPage = page;
+    const totalPages = Math.ceil(results.length / STRATS_PER_PAGE);
+    const start = page * STRATS_PER_PAGE;
+    const pageItems = results.slice(start, start + STRATS_PER_PAGE);
 
-    const strategyLabel = {
-      O_flush_first:'O·同花先', N_bomb_first:'N·炸弹先', O_flush_no_straight:'O·去顺子'
-    }[r.meta.strategy] || r.meta.strategy;
+    tbody.innerHTML = '';
 
-    const statCell = (v, threshold) => {
-      let cls = 'stat-mid';
-      if (v <= threshold[0]) cls = 'stat-high';
-      else if (v >= threshold[1]) cls = 'stat-low';
-      return `<span class="stat-badge ${cls}">${v}</span>`;
-    };
+    pageItems.forEach((r, pi) => {
+      const i = start + pi;
+      const s = r.stats;
+      const isBest = (i === bestIdx);
+      const tr = document.createElement('tr');
+      if (isBest) tr.className = 'best-row';
 
-    tr.innerHTML = `
-      <td>${isBest ? '⭐' : i+1}</td>
-      <td style="text-align:left">${strategyLabel}</td>
-      <td>${r.meta.bomb_wilds}</td>
-      <td style="text-align:left;font-size:0.7rem">${r.meta.order.slice(0,4).map(x=>groupTypeName(x).slice(0,2)).join('→')}</td>
-      <td>${statCell(s.single, [2, 6])}</td>
-      <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb}</td>
-      <td>${s.straight}</td><td>${s.board}</td><td>${s.steel}</td>
-      <td>${s.three_two}</td><td>${s.triple}</td><td>${s.pair}</td>
-    `;
-    tbody.appendChild(tr);
-  });
+      const strategyLabel = {
+        O_flush_first:'O·同花先', N_bomb_first:'N·炸弹先', O_flush_no_straight:'O·去顺子'
+      }[r.meta.strategy] || r.meta.strategy;
+
+      const statCell = (v, threshold) => {
+        let cls = 'stat-mid';
+        if (v <= threshold[0]) cls = 'stat-high';
+        else if (v >= threshold[1]) cls = 'stat-low';
+        return `<span class="stat-badge ${cls}">${v}</span>`;
+      };
+
+      tr.innerHTML = `
+        <td>${isBest ? '⭐' : i+1}</td>
+        <td style="text-align:left">${strategyLabel}</td>
+        <td>${r.meta.bomb_wilds}</td>
+        <td style="text-align:left;font-size:0.7rem">${r.meta.order.slice(0,4).map(x=>groupTypeName(x).slice(0,2)).join('→')}</td>
+        <td>${statCell(s.single, [2, 6])}</td>
+        <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb}</td>
+        <td>${s.straight}</td><td>${s.board}</td><td>${s.steel}</td>
+        <td>${s.three_two}</td><td>${s.triple}</td><td>${s.pair}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // 重新滚动到表格顶部
+    tbody.parentElement.parentElement.scrollTop = 0;
+
+    // 渲染分页按钮
+    if (totalPages <= 1) {
+      pagination.style.display = 'none';
+      return;
+    }
+    pagination.style.display = 'flex';
+    let html = `<button ${page===0?'disabled':''} onclick="renderStratsPage(${page-1})">◀</button>`;
+    const maxShow = 7;
+    let pStart = Math.max(0, page - Math.floor(maxShow/2));
+    let pEnd = Math.min(totalPages, pStart + maxShow);
+    if (pEnd - pStart < maxShow) pStart = Math.max(0, pEnd - maxShow);
+    for (let p = pStart; p < pEnd; p++) {
+      html += `<button class="${p===page?'active':''}" onclick="renderStratsPage(${p})">${p+1}</button>`;
+    }
+    html += `<button ${page>=totalPages-1?'disabled':''} onclick="renderStratsPage(${page+1})">▶</button>`;
+    html += `<span class="page-info">共 ${results.length} 条</span>`;
+    pagination.innerHTML = html;
+  }
+
+  // 暴露分页切换函数到全局
+  window.renderStratsPage = (p) => renderPage(p);
+
+  // 翻到最优方案所在的页
+  const bestPage = Math.floor(bestIdx / STRATS_PER_PAGE);
+  renderPage(bestPage);
 }
 
 // ── Clear ──
@@ -777,7 +901,7 @@ function cardRankLabel(c) {
 async function openConfig() {
   document.getElementById('configOverlay').classList.add('active');
   try {
-    const resp = await fetch('/api/deck');
+    const resp = await fetch('api/deck');
     const data = await resp.json();
     deckCards = data.cards;
     playerAssign = [[],[],[],[]];
@@ -991,7 +1115,7 @@ async function submitConfig() {
   if (total !== 108) { showToast(`还有 ${108 - total} 张牌未分配`); return; }
 
   try {
-    const resp = await fetch('/api/deal_custom', {
+    const resp = await fetch('api/deal_custom', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ players: playerAssign, level:'2' })
     });
@@ -1012,6 +1136,13 @@ async function submitConfig() {
     document.getElementById('zonesContainer').style.display = 'none';
     document.getElementById('stratsContainer').style.display = 'none';
     sortResult = null;
+
+    // 显示编码
+    if (data.hand_hex) {
+      document.getElementById('handHexText').textContent = data.hand_hex;
+      document.getElementById('handHexBox').style.display = 'flex';
+    }
+
     closeConfig();
     showToast('配牌成功！' + data.wild_count + '张癞子 / 27张手牌');
   } catch(e) {
