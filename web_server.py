@@ -4,13 +4,14 @@
 八癞子掼蛋 Web UI 服务器 — 纯 Flask 壳，所有逻辑在 sort_8laizi 中。
 """
 import sys
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, make_response
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from sort_8laizi import (
-    Card, deal_random_hand, cards_to_json, sort_8laizi_with_details
+    Card, deal_random_hand, cards_to_json, sort_8laizi_with_details,
+    build_full_deck_cards, validate_deal, build_full_deck, SUITS, RANKS,
 )
 
 app = Flask(__name__, static_folder=None)
@@ -18,7 +19,11 @@ app = Flask(__name__, static_folder=None)
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    resp = make_response(send_from_directory(".", "index.html"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/api/deal", methods=["POST"])
@@ -34,6 +39,57 @@ def api_deal():
         "total": len(cards),
         "level": level,
         "seed": seed,
+    })
+
+
+@app.route("/api/deck", methods=["GET"])
+def api_deck():
+    """返回完整 108 张牌库（供配牌弹窗使用）。"""
+    level = request.args.get("level", "2")
+    cards = build_full_deck_cards(level)
+    return jsonify({
+        "cards": cards_to_json(cards),
+        "total": len(cards),
+        "level": level,
+    })
+
+
+@app.route("/api/deal_custom", methods=["POST"])
+def api_deal_custom():
+    """
+    自定义配牌后发牌：接收 4 个玩家的 cid 列表，校验并返回手牌。
+    """
+    data = request.get_json() or {}
+    level = data.get("level", "2")
+    player_ids = data.get("players", [[], [], [], []])
+
+    deck = build_full_deck_cards(level)
+    cid_to_card = {c.cid: c for c in deck}
+
+    validation = validate_deal(player_ids)
+    if not validation["ok"]:
+        return jsonify({
+            "ok": False,
+            "error": validation["error"],
+            "counts": validation.get("counts", [len(p) for p in player_ids]),
+        }), 400
+
+    # 构建每个玩家的手牌
+    players_hands = []
+    for ids in player_ids:
+        hand = [cid_to_card[cid] for cid in ids]
+        players_hands.append(hand)
+
+    # 返回 P1 的手牌 + 全部信息
+    p1_hand = players_hands[0]
+    wild_count = sum(1 for c in p1_hand if c.is_wild)
+    return jsonify({
+        "ok": True,
+        "hand": cards_to_json(p1_hand),
+        "wild_count": wild_count,
+        "total": len(p1_hand),
+        "level": level,
+        "all_counts": [len(h) for h in players_hands],
     })
 
 

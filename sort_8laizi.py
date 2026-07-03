@@ -590,7 +590,14 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
         n_wilds -= needed
 
         power = taken[0].power if taken else WILD_POWER
-        steels.append(CardGroup(w + taken, "steel", power))
+        group = CardGroup(w + taken, "steel", power)
+
+        natural_ranks = sorted(set(c.rank for c in taken if is_natural_rank(c)))
+        for i in range(1, len(natural_ranks)):
+            if RANK_ORDER[natural_ranks[i]] != RANK_ORDER[natural_ranks[i-1]] + 1:
+                raise ValueError(f"Steel plate has non-consecutive ranks: {natural_ranks}")
+
+        steels.append(group)
 
     return steels
 
@@ -1092,6 +1099,53 @@ def deal_random_hand(level: str = "2", seed: int = None) -> list:
     for i, (suit, rank, is_wild) in enumerate(hand):
         cards.append(Card(suit, rank, is_wild=is_wild, cid=i))
     return cards
+
+
+def build_full_deck_cards(level: str = "2") -> list:
+    """构建 2 副牌共 108 张，返回 Card 对象列表（每张牌有唯一 cid）。"""
+    deck_specs = build_full_deck(level)
+    cards = []
+    for i, (suit, rank, is_wild) in enumerate(deck_specs):
+        cards.append(Card(suit, rank, is_wild=is_wild, cid=i))
+    return cards
+
+
+def validate_deal(player_cards: list, total_cards: int = 108, players: int = 4,
+                  hand_size: int = 27) -> dict:
+    """
+    校验自定义发牌是否合法。
+
+    player_cards: [[card_cid, ...], ...]  每个玩家的 cid 列表
+    返回 {"ok": bool, "error": str, "counts": [N,...]}
+    """
+    if len(player_cards) != players:
+        return {"ok": False, "error": f"需要 {players} 个玩家，收到 {len(player_cards)} 个"}
+
+    all_ids = set()
+    for i, ids in enumerate(player_cards):
+        for cid in ids:
+            if cid in all_ids:
+                return {"ok": False, "error": f"cid={cid} 重复出现（玩家 {i+1}）"}
+            all_ids.add(cid)
+
+    expected = set(range(total_cards))
+    if all_ids != expected:
+        missing = expected - all_ids
+        extra = all_ids - expected
+        msg = ""
+        if missing:
+            msg += f"缺少 cid: {sorted(missing)[:5]}..."
+        if extra:
+            msg += f" 无效 cid: {sorted(extra)[:5]}..."
+        return {"ok": False, "error": msg.strip()}
+
+    counts = [len(ids) for ids in player_cards]
+    for i, c in enumerate(counts):
+        if c != hand_size:
+            return {"ok": False, "error": f"玩家 {i+1} 有 {c} 张牌，需要 {hand_size} 张",
+                    "counts": counts}
+
+    return {"ok": True, "error": "", "counts": counts}
 
 
 def cards_to_json(cards: list) -> list:
