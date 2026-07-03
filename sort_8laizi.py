@@ -707,6 +707,16 @@ def extract_remaining(pool: list, wild_pool: list) -> tuple:
             pairs.append(CardGroup(w + cards, "pair",
                                    cards[0].power if cards else WILD_POWER))
 
+    # 大小王对子（2小王=对子，2大王=对子）
+    for joker_rank in ("SJ", "BJ"):
+        jokers = [c for c in pool if c.rank == joker_rank]
+        while len(jokers) >= 2:
+            take = jokers[:2]
+            for c in take:
+                pool.remove(c)
+            pairs.append(CardGroup(take, "pair", take[0].power))
+            jokers = jokers[2:]
+
     # 单张（剩余所有）
     for c in list(pool):
         pool.remove(c)
