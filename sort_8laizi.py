@@ -351,84 +351,56 @@ def extract_flush_straights(pool: list, wild_pool: list,
 # ================================================================
 
 def extract_straights(pool: list, wild_pool: list) -> list:
-    """贪心提顺子（5张连续，不限花色）。用癞子补断口。
-    支持 A 作为高牌（10-J-Q-K-A）。"""
+    """贪心提顺子（恰好5张连续，不限花色）。用癞子补断口。
+    掼蛋顺子只能是5连张。支持A作为高牌（10-J-Q-K-A）。"""
     straights = []
     rank_cnt = rank_counts(pool)
     n_wilds = len(wild_pool)
 
     while True:
-        # 构建扩展rank列表：如果手牌中有A，在末尾虚拟一个A(索引13)
-        has_ace = rank_cnt.get("A", 0) > 0
-        available_normal = sorted(
+        available = sorted(
             (r for r, c in rank_cnt.items() if c > 0),
             key=lambda r: RANK_ORDER[r]
         )
-        # 扩展列表包含虚拟Ace（索引13），用于检测10-J-Q-K-A
-        if has_ace and "A" in available_normal:
-            extended_available = list(available_normal)
-            if "A" not in extended_available[-1:] or extended_available[-1] == "A":
-                # 确保虚拟A在最后
-                pass
-            # 构建可用于搜索的扩展序列
-            available = list(available_normal)
-        else:
-            available = list(available_normal)
-            extended_available = list(available_normal)
-
         if len(available) < 2:
             break
 
-        best = None  # (start_r, end_r, needed_wilds, length, is_ace_high)
+        # 搜索所有恰好5连续的窗口（普通 + Ace高牌）
+        best = None  # (start_idx, needed_wilds, is_ace_high)
 
-        # 搜索普通连续段
-        for i, start_r in enumerate(available):
-            for j, end_r in enumerate(available):
-                if j <= i:
-                    continue
-                length = RANK_ORDER[end_r] - RANK_ORDER[start_r] + 1
-                if length < 5:
-                    continue
-                needed = 0
-                for ri in range(RANK_ORDER[start_r], RANK_ORDER[end_r] + 1):
-                    r = RANKS[ri]
-                    if rank_cnt.get(r, 0) == 0:
+        # 普通5连
+        for i in range(len(available)):
+            start_r = available[i]
+            si = RANK_ORDER[start_r]
+            if si > 8:  # 最高从9开始(9,J,Q,K,?)，10开始只能到A(高牌)
+                # 尝试A高牌：10-J-Q-K-A
+                if si == 9:  # 10
+                    needed = sum(1 for ri in [9,10,11,12] if rank_cnt.get(RANKS[ri], 0) == 0)
+                    if rank_cnt.get("A", 0) == 0:
                         needed += 1
-                if needed <= n_wilds:
-                    if best is None or needed < best[2] or (needed == best[2] and length < best[3]):
-                        best = (start_r, end_r, needed, length, False)
-
-        # 搜索Ace高牌连续段 (..., 10, J, Q, K, A)
-        if has_ace:
-            for i, start_r in enumerate(available):
-                if start_r == "A":
-                    continue  # A不能同时是低牌和高牌
-                si_idx = RANK_ORDER[start_r]
-                # A作为高牌时索引视为13
-                length = 13 - si_idx + 1  # 从 start_r 到虚拟A
-                if length < 5:
-                    continue
-                needed = 0
-                for ri in range(si_idx, 13):  # 不包括A本身
-                    r = RANKS[ri]
-                    if rank_cnt.get(r, 0) == 0:
-                        needed += 1
-                # A本身
-                if rank_cnt.get("A", 0) == 0:
-                    needed += 1
-                if needed <= n_wilds:
-                    if best is None or needed < best[2] or (needed == best[2] and length < best[3]):
-                        best = (start_r, "A", needed, length, True)
+                    if needed <= n_wilds:
+                        if best is None or needed < best[1]:
+                            best = (i, needed, True)
+                continue
+            # 需要 available 中有连续的5个rank
+            ranks_needed = [RANKS[si + j] for j in range(5)]
+            # 检查这5个rank是否都在available中（用rank_cnt检查，因为有癞子可以补）
+            needed = sum(1 for r in ranks_needed if rank_cnt.get(r, 0) == 0)
+            if needed <= n_wilds:
+                if best is None or needed < best[1]:
+                    best = (i, needed, False)
 
         if best is None:
             break
 
-        start_r, end_r, needed, length, is_ace_high = best
+        si, needed, is_ace_high = best
+        start_r = available[si]
+        si_idx = RANK_ORDER[start_r]
 
         # 提取
         taken = []
         if is_ace_high:
-            for ri in range(RANK_ORDER[start_r], 13):
+            for ri in [9, 10, 11, 12]:  # 10, J, Q, K
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
                     c = next((x for x in pool if x.rank == r and is_natural_rank(x)), None)
@@ -436,7 +408,6 @@ def extract_straights(pool: list, wild_pool: list) -> list:
                         pool.remove(c)
                         taken.append(c)
                         rank_cnt[r] = max(0, rank_cnt[r] - 1)
-            # 取A
             if rank_cnt.get("A", 0) > 0:
                 c = next((x for x in pool if x.rank == "A" and is_natural_rank(x)), None)
                 if c:
@@ -444,7 +415,7 @@ def extract_straights(pool: list, wild_pool: list) -> list:
                     taken.append(c)
                     rank_cnt["A"] = max(0, rank_cnt["A"] - 1)
         else:
-            for ri in range(RANK_ORDER[start_r], RANK_ORDER[end_r] + 1):
+            for ri in range(si_idx, si_idx + 5):
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
                     c = next((x for x in pool if x.rank == r and is_natural_rank(x)), None)
@@ -457,24 +428,23 @@ def extract_straights(pool: list, wild_pool: list) -> list:
         del wild_pool[:needed]
         n_wilds -= needed
 
-        power = taken[0].power + length - 1 if taken else 0
+        power = taken[0].power + 4 if taken else 0
         straights.append(CardGroup(w + taken, "straight", power))
 
     return straights
 
 
 # ================================================================
-#  木板提取（连对：3+连续rank各有>=2张）
+#  木板提取（连对：恰好3个连续rank各有>=2张）
 # ================================================================
 
 def extract_boards(pool: list, wild_pool: list) -> list:
-    """贪心提木板（连对：>=3个连续rank各>=2张）。"""
+    """贪心提木板（连对：恰好3个连续rank各>=2张）。掼蛋木板只能是3连对。"""
     boards = []
     rank_cnt = rank_counts(pool)
     n_wilds = len(wild_pool)
 
     while True:
-        # 每个rank可用数量（自然+最多补到2）
         available = sorted(
             (r for r, c in rank_cnt.items() if c + n_wilds >= 2 and c > 0),
             key=lambda r: RANK_ORDER[r]
@@ -482,35 +452,24 @@ def extract_boards(pool: list, wild_pool: list) -> list:
         if len(available) < 3:
             break
 
-        # 找最长的 >=3 连续段
-        best = None  # (start_i, length, needed_wilds)
-        cur_start = 0
-        cur_len = 1
-        cur_needed = max(0, 2 - rank_cnt.get(available[0], 0))
-
-        for i in range(1, len(available)):
-            if RANK_ORDER[available[i]] == RANK_ORDER[available[i - 1]] + 1:
-                cur_len += 1
-                cur_needed += max(0, 2 - rank_cnt.get(available[i], 0))
-            else:
-                if cur_len >= 3 and cur_needed <= n_wilds:
-                    if best is None or cur_len > best[1] or (cur_len == best[1] and cur_needed < best[2]):
-                        best = (cur_start, cur_len, cur_needed)
-                cur_start = i
-                cur_len = 1
-                cur_needed = max(0, 2 - rank_cnt.get(available[i], 0))
-
-        if cur_len >= 3 and cur_needed <= n_wilds:
-            if best is None or cur_len > best[1] or (cur_len == best[1] and cur_needed < best[2]):
-                best = (cur_start, cur_len, cur_needed)
+        # 扫描所有恰好3连续的窗口，选癞子需求最少的
+        best = None  # (start_i, needed_wilds)
+        for i in range(len(available) - 2):
+            r0, r1, r2 = available[i], available[i+1], available[i+2]
+            if RANK_ORDER[r1] != RANK_ORDER[r0] + 1 or RANK_ORDER[r2] != RANK_ORDER[r0] + 2:
+                continue
+            needed = sum(max(0, 2 - rank_cnt.get(available[i+j], 0)) for j in range(3))
+            if needed <= n_wilds:
+                if best is None or needed < best[1]:
+                    best = (i, needed)
 
         if best is None:
             break
 
-        si, length, needed = best
+        si, needed = best
 
         taken = []
-        for j in range(si, si + length):
+        for j in range(si, si + 3):
             r = available[j]
             cnt = rank_cnt.get(r, 0)
             cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 2)]
@@ -520,10 +479,9 @@ def extract_boards(pool: list, wild_pool: list) -> list:
                 rank_cnt[r] = max(0, rank_cnt[r] - 1)
 
         # 如果自然牌不够2张，用癞子补
-        short = needed
-        w = wild_pool[:short]
-        del wild_pool[:short]
-        n_wilds -= short
+        w = wild_pool[:needed]
+        del wild_pool[:needed]
+        n_wilds -= needed
 
         power = taken[0].power if taken else WILD_POWER
         boards.append(CardGroup(w + taken, "board", power))
@@ -532,11 +490,11 @@ def extract_boards(pool: list, wild_pool: list) -> list:
 
 
 # ================================================================
-#  钢板提取（2+连续rank各有>=3张）
+#  钢板提取（恰好2个连续rank各有>=3张）
 # ================================================================
 
 def extract_steel_plates(pool: list, wild_pool: list) -> list:
-    """贪心提钢板（>=2个连续rank各>=3张）。"""
+    """贪心提钢板（恰好2个连续rank各>=3张）。掼蛋钢板只能是2连三张。"""
     steels = []
     rank_cnt = rank_counts(pool)
     n_wilds = len(wild_pool)
@@ -549,34 +507,24 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
         if len(available) < 2:
             break
 
-        best = None  # (start_i, length, needed_wilds)
-        cur_start = 0
-        cur_len = 1
-        cur_needed = max(0, 3 - rank_cnt.get(available[0], 0))
-
-        for i in range(1, len(available)):
-            if RANK_ORDER[available[i]] == RANK_ORDER[available[i - 1]] + 1:
-                cur_len += 1
-                cur_needed += max(0, 3 - rank_cnt.get(available[i], 0))
-            else:
-                if cur_len >= 2 and cur_needed <= n_wilds:
-                    if best is None or cur_len > best[1] or (cur_len == best[1] and cur_needed < best[2]):
-                        best = (cur_start, cur_len, cur_needed)
-                cur_start = i
-                cur_len = 1
-                cur_needed = max(0, 3 - rank_cnt.get(available[i], 0))
-
-        if cur_len >= 2 and cur_needed <= n_wilds:
-            if best is None or cur_len > best[1] or (cur_len == best[1] and cur_needed < best[2]):
-                best = (cur_start, cur_len, cur_needed)
+        # 扫描所有恰好2连续的窗口，选癞子需求最少的
+        best = None  # (start_i, needed_wilds)
+        for i in range(len(available) - 1):
+            r0, r1 = available[i], available[i+1]
+            if RANK_ORDER[r1] != RANK_ORDER[r0] + 1:
+                continue
+            needed = sum(max(0, 3 - rank_cnt.get(available[i+j], 0)) for j in range(2))
+            if needed <= n_wilds:
+                if best is None or needed < best[1]:
+                    best = (i, needed)
 
         if best is None:
             break
 
-        si, length, needed = best
+        si, needed = best
 
         taken = []
-        for j in range(si, si + min(length, 2)):
+        for j in range(si, si + 2):
             r = available[j]
             cnt = rank_cnt.get(r, 0)
             cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 3)]
