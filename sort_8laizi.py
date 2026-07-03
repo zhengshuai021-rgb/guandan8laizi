@@ -261,11 +261,13 @@ def extract_bombs(pool: list, wild_pool: list,
 # ================================================================
 
 def extract_flush_straights(pool: list, wild_pool: list,
-                            max_wilds_for_flush: int = 999) -> list:
+                            max_wilds_for_flush: int = 999,
+                            suit_priority: list = None) -> list:
     """
     贪心提同花顺：严格 5 张同花色连续牌，癞子补断口。
     支持 A 作为高牌（10-J-Q-K-A）。
     max_wilds_for_flush: 最多用多少个癞子做同花顺。
+    suit_priority: 花色处理顺序，None 则使用 SUITS 默认顺序。
     """
     remaining = min(max_wilds_for_flush, len(wild_pool))
     flushes = []
@@ -276,7 +278,11 @@ def extract_flush_straights(pool: list, wild_pool: list,
     #   10,J,Q,K,A  (索引 9-13, A 视为高牌索引 13) = 1 个 A 高牌窗口
     WINDOWS = [(s, s + 4, False) for s in range(9)] + [(9, 13, True)]
 
-    for suit in SUITS:
+    if suit_priority is None:
+        suit_order = SUITS
+    else:
+        suit_order = suit_priority
+    for suit in suit_order:
         if remaining <= 0:
             break
         cards = suit_map.get(suit, [])
@@ -304,8 +310,9 @@ def extract_flush_straights(pool: list, wild_pool: list,
                         wilds += 1
 
             if wilds <= remaining:
-                if best is None or wilds < best[1] or (
-                    wilds == best[1] and start > best[0]
+                # 优先选高位同花顺（start越大=点数越高），同起点时选癞子少的
+                if best is None or start > best[0] or (
+                    start == best[0] and wilds < best[1]
                 ):
                     best = (start, wilds, ace_high)
 
@@ -777,7 +784,15 @@ def execute_strategy(natural_cards: list, wild_cards: list,
 
     if strategy == "O_flush_first":
         # 方案O: 同花顺 -> 炸弹
-        result.flushes = extract_flush_straights(pool, wp)
+        # 按自然牌数量升序处理花色（牌少的花色优先，减少对后续组合的影响）
+        suit_counts = defaultdict(int)
+        for c in pool:
+            if is_natural_rank(c):
+                suit_counts[c.suit] += 1
+        flush_suit_order = sorted(SUITS, key=lambda s: suit_counts.get(s, 0))
+        result.flushes = extract_flush_straights(pool, wp,
+                                                 max_wilds_for_flush=max(0, len(wp) - bomb_wilds),
+                                                 suit_priority=flush_suit_order)
         result.bombs = extract_bombs(pool, wp, bomb_wilds)
     elif strategy == "N_bomb_first":
         # 方案N: 炸弹 -> 同花顺
