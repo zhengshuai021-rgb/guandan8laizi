@@ -262,12 +262,14 @@ def extract_bombs(pool: list, wild_pool: list,
 
 def extract_flush_straights(pool: list, wild_pool: list,
                             max_wilds_for_flush: int = 999,
-                            suit_priority: list = None) -> list:
+                            suit_priority: list = None,
+                            max_flushes: int = 999) -> list:
     """
     贪心提同花顺：严格 5 张同花色连续牌，癞子补断口。
     支持 A 作为高牌（10-J-Q-K-A）。
     max_wilds_for_flush: 最多用多少个癞子做同花顺。
     suit_priority: 花色处理顺序，None 则使用 SUITS 默认顺序。
+    max_flushes: 最多创建几个同花顺。
     """
     remaining = min(max_wilds_for_flush, len(wild_pool))
     flushes = []
@@ -282,6 +284,35 @@ def extract_flush_straights(pool: list, wild_pool: list,
         suit_order = SUITS
     else:
         suit_order = suit_priority
+
+    # 当 max_flushes=1 时：全局搜索最优单个同花顺（跨花色按威力+癞子数选）
+    if max_flushes == 1:
+        candidates = []  # (suit, start, wilds_needed, ace_high)
+        for suit in SUITS:
+            cards = suit_map.get(suit, [])
+            if not cards:
+                continue
+            suit_ranks = set(RANK_ORDER[c.rank] for c in cards)
+            for start, end, ace_high in WINDOWS:
+                wilds = 0
+                if ace_high:
+                    for ri in range(start, 13):
+                        if ri not in suit_ranks:
+                            wilds += 1
+                    if 0 not in suit_ranks:
+                        wilds += 1
+                else:
+                    for ri in range(start, end + 1):
+                        if ri not in suit_ranks:
+                            wilds += 1
+                if wilds <= remaining:
+                    candidates.append((suit, start, wilds, ace_high))
+        if candidates:
+            # 优先高位、同高位选癞子最少的
+            candidates.sort(key=lambda x: (-x[1], x[2]))
+            best_suit, best_start, best_wilds, best_ace = candidates[0]
+            suit_order = [best_suit]
+
     for suit in suit_order:
         if remaining <= 0:
             break
@@ -290,13 +321,10 @@ def extract_flush_straights(pool: list, wild_pool: list,
             continue
 
         suit_ranks = set(RANK_ORDER[c.rank] for c in cards)
-        has_ace = 0 in suit_ranks
 
         best = None  # (start_idx, wilds_needed, ace_high)
 
         for start, end, ace_high in WINDOWS:
-            if ace_high and not has_ace:
-                continue
             wilds = 0
             if ace_high:
                 for ri in range(start, 13):
@@ -356,6 +384,8 @@ def extract_flush_straights(pool: list, wild_pool: list,
         fnp = all_cards[first_nat_idx].value
         power = 520 + fnp + max(0, 4 - first_nat_idx)
         flushes.append(CardGroup(all_cards, "flush", power))
+        if len(flushes) >= max_flushes:
+            break
 
     return flushes
 
@@ -554,7 +584,8 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
         power = taken[0].power if taken else WILD_POWER
         group = CardGroup(w + taken, "steel", power)
 
-        natural_ranks = sorted(set(c.rank for c in taken if is_natural_rank(c)))
+        natural_ranks = sorted(set(c.rank for c in taken if is_natural_rank(c)),
+                               key=lambda r: RANK_ORDER[r])
         for i in range(1, len(natural_ranks)):
             if RANK_ORDER[natural_ranks[i]] != RANK_ORDER[natural_ranks[i-1]] + 1:
                 raise ValueError(f"Steel plate has non-consecutive ranks: {natural_ranks}")
@@ -782,9 +813,9 @@ def execute_strategy(natural_cards: list, wild_cards: list,
     result = SortResult()
     result.kings = extract_king_bombs(pool)
 
-    if strategy == "O_flush_first":
+    if strategy in ("O_flush_first", "O_flush_single"):
         # 方案O: 同花顺 -> 炸弹
-        # 按自然牌数量升序处理花色（牌少的花色优先，减少对后续组合的影响）
+        max_f = 1 if strategy == "O_flush_single" else 999
         suit_counts = defaultdict(int)
         for c in pool:
             if is_natural_rank(c):
@@ -792,7 +823,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         flush_suit_order = sorted(SUITS, key=lambda s: suit_counts.get(s, 0))
         result.flushes = extract_flush_straights(pool, wp,
                                                  max_wilds_for_flush=max(0, len(wp) - bomb_wilds),
-                                                 suit_priority=flush_suit_order)
+                                                 suit_priority=flush_suit_order,
+                                                 max_flushes=max_f)
         result.bombs = extract_bombs(pool, wp, bomb_wilds)
     elif strategy == "N_bomb_first":
         # 方案N: 炸弹 -> 同花顺
@@ -921,6 +953,19 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
             )
             add_result(result, {
                 "strategy": "O_flush_first",
+                "bomb_wilds": bomb_wilds,
+                "order": list(order),
+            })
+
+    # 方案O_single: 同花先但最多只做1个同花顺（避免贪心消耗过多自然牌）
+    for bomb_wilds in range(n_lz + 1):
+        for order in EXTRACTION_ORDERS:
+            result = execute_strategy(
+                list(natural_cards), list(wild_cards),
+                "O_flush_single", bomb_wilds, order
+            )
+            add_result(result, {
+                "strategy": "O_flush_single",
                 "bomb_wilds": bomb_wilds,
                 "order": list(order),
             })
