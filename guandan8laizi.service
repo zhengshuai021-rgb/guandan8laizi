@@ -1,0 +1,16 @@
+[Unit]
+Description=Guandan 8 Laizi Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/.openclaw/workspace/projects/guandan8laizi
+ExecStart=/usr/bin/python3 /home/admin/.openclaw/workspace/projects/guandan8laizi/web_server.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/home/admin/.openclaw/workspace/projects/guandan8laizi/web_server.log
+StandardError=append:/home/admin/.openclaw/workspace/projects/guandan8laizi/web_server.log
+
+[Install]
+WantedBy=multi-user.target

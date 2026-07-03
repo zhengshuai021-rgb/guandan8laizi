@@ -60,14 +60,21 @@ BIG_JOKER_POWER = 17
 #  数据结构
 # ================================================================
 
+_card_cid_counter = 0
+
 class Card:
     __slots__ = ('suit', 'rank', 'is_wild', 'power', 'value', 'cid')
 
-    def __init__(self, suit: str, rank: str, is_wild: bool = False, cid: int = 0):
+    def __init__(self, suit: str, rank: str, is_wild: bool = False, cid: int = None):
+        global _card_cid_counter
         self.suit = suit
         self.rank = rank
         self.is_wild = is_wild
-        self.cid = cid
+        if cid is not None:
+            self.cid = cid
+        else:
+            _card_cid_counter += 1
+            self.cid = _card_cid_counter
         if is_wild:
             self.power = WILD_POWER
             self.value = 1
