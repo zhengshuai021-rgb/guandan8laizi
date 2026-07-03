@@ -619,13 +619,13 @@ def extract_three_with_two(pool: list, wild_pool: list,
         need_triple = max(0, 3 - tcnt)
 
         # 找可用的对子rank（排除三张rank自身，除非cnt>3）
-        # 优先选恰好2张的rank（不浪费），再按张数降序
+        # 优先选恰好2张的rank（不浪费），再从小牌开始带（小对子先用）
         pair_candidates = sorted(
             [(r, c) for r, c in rank_cnt.items()
              if c + n_wilds >= 2 and c > 0
              and RANK_VALUE.get(r, 0) <= max_pair_value
              and (r != tr or c > 3)],
-            key=lambda x: (0 if x[1] == 2 else 1, -x[1], -RANK_VALUE.get(x[0], 0))
+            key=lambda x: (0 if x[1] == 2 else 1, -x[1], RANK_VALUE.get(x[0], 0))
         )
         if not pair_candidates:
             break
