@@ -483,38 +483,53 @@ def extract_straights(pool: list, wild_pool: list) -> list:
 # ================================================================
 
 def extract_boards(pool: list, wild_pool: list) -> list:
-    """贪心提木板（连对：恰好3个连续rank各>=2张）。掼蛋木板只能是3连对。"""
+    """贪心提木板（连对：恰好3个连续rank各>=2张）。掼蛋木板只能是3连对。
+    支持用癞子补到2张（即某rank可以0自然牌+2癞子组对）。"""
     boards = []
     rank_cnt = rank_counts(pool)
     n_wilds = len(wild_pool)
 
     while True:
+        # 包含所有可能组对的rank（含纯癞子对）
         available = sorted(
-            (r for r, c in rank_cnt.items() if c + n_wilds >= 2 and c > 0),
+            (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 2),
             key=lambda r: RANK_ORDER[r]
         )
         if len(available) < 3:
             break
 
-        # 扫描所有恰好3连续的窗口，选癞子需求最少的
-        best = None  # (start_i, needed_wilds)
+        # 扫描所有恰好3连续的窗口，选癞子需求最少的；同等需求选高rank的
+        best = None  # (start_i, needed_wilds, end_rank_order)
         for i in range(len(available) - 2):
             r0, r1, r2 = available[i], available[i+1], available[i+2]
             if RANK_ORDER[r1] != RANK_ORDER[r0] + 1 or RANK_ORDER[r2] != RANK_ORDER[r0] + 2:
                 continue
             needed = sum(max(0, 2 - rank_cnt.get(available[i+j], 0)) for j in range(3))
             if needed <= n_wilds:
-                if best is None or needed < best[1]:
-                    best = (i, needed)
+                end_order = RANK_ORDER[available[i+2]]
+                if best is None or needed < best[1] or (needed == best[1] and end_order > best[2]):
+                    best = (i, needed, end_order)
+
+        # 尝试 Ace-high 木板: Q-K-A (RANK_ORDER A=0, 但作为高牌跟在K后)
+        if best is None:
+            ace_needed = sum(max(0, 2 - rank_cnt.get(r, 0)) for r in ["Q", "K", "A"])
+            if ace_needed <= n_wilds and all(
+                rank_cnt.get(r, 0) + n_wilds >= 2 for r in ["Q", "K", "A"]
+            ):
+                best = (-1, ace_needed, 0)  # special marker for ace-high
 
         if best is None:
             break
 
-        si, needed = best
+        si, needed, _ = best
+        ranks_to_take = []
+        if si == -1:
+            ranks_to_take = ["Q", "K", "A"]
+        else:
+            ranks_to_take = [available[si+j] for j in range(3)]
 
         taken = []
-        for j in range(si, si + 3):
-            r = available[j]
+        for r in ranks_to_take:
             cnt = rank_cnt.get(r, 0)
             cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 2)]
             for c in cards:
@@ -522,7 +537,6 @@ def extract_boards(pool: list, wild_pool: list) -> list:
                 taken.append(c)
                 rank_cnt[r] = max(0, rank_cnt[r] - 1)
 
-        # 如果自然牌不够2张，用癞子补
         w = wild_pool[:needed]
         del wild_pool[:needed]
         n_wilds -= needed
@@ -538,38 +552,53 @@ def extract_boards(pool: list, wild_pool: list) -> list:
 # ================================================================
 
 def extract_steel_plates(pool: list, wild_pool: list) -> list:
-    """贪心提钢板（恰好2个连续rank各>=3张）。掼蛋钢板只能是2连三张。"""
+    """贪心提钢板（恰好2个连续rank各>=3张）。掼蛋钢板只能是2连三张。
+    支持用癞子补到3张（即某rank可以0自然牌+3癞子组三张）。"""
     steels = []
     rank_cnt = rank_counts(pool)
     n_wilds = len(wild_pool)
 
     while True:
+        # 包含所有可能组三张的rank（含纯癞子三张）
         available = sorted(
-            (r for r, c in rank_cnt.items() if c + n_wilds >= 3 and c > 0),
+            (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 3),
             key=lambda r: RANK_ORDER[r]
         )
         if len(available) < 2:
             break
 
-        # 扫描所有恰好2连续的窗口，选癞子需求最少的
-        best = None  # (start_i, needed_wilds)
+        # 扫描所有恰好2连续的窗口，选癞子需求最少的；同等需求选高rank的
+        best = None  # (start_i, needed_wilds, end_rank_order)
         for i in range(len(available) - 1):
             r0, r1 = available[i], available[i+1]
             if RANK_ORDER[r1] != RANK_ORDER[r0] + 1:
                 continue
             needed = sum(max(0, 3 - rank_cnt.get(available[i+j], 0)) for j in range(2))
             if needed <= n_wilds:
-                if best is None or needed < best[1]:
-                    best = (i, needed)
+                end_order = RANK_ORDER[available[i+1]]
+                if best is None or needed < best[1] or (needed == best[1] and end_order > best[2]):
+                    best = (i, needed, end_order)
+
+        # 尝试 Ace-high 钢板: K-A (RANK_ORDER A=0, K=12)
+        if best is None:
+            ace_needed = sum(max(0, 3 - rank_cnt.get(r, 0)) for r in ["K", "A"])
+            if ace_needed <= n_wilds and all(
+                rank_cnt.get(r, 0) + n_wilds >= 3 for r in ["K", "A"]
+            ):
+                best = (-1, ace_needed, 0)  # special marker for ace-high
 
         if best is None:
             break
 
-        si, needed = best
+        si, needed, _ = best
+        ranks_to_take = []
+        if si == -1:
+            ranks_to_take = ["K", "A"]
+        else:
+            ranks_to_take = [available[si+j] for j in range(2)]
 
         taken = []
-        for j in range(si, si + 2):
-            r = available[j]
+        for r in ranks_to_take:
             cnt = rank_cnt.get(r, 0)
             cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 3)]
             for c in cards:
@@ -752,13 +781,13 @@ class SortResult:
     def score(self) -> tuple:
         bomb5plus = sum(1 for b in self.bombs if b.size >= 5)
         return (
-            len(self.singles),          # 单张数（越小越好）
+            len(self.singles),           # 单张数（越小越好 — 减少手牌碎片化）
             -len(self.bombs),            # 炸弹数
             -len(self.flushes),          # 同花顺数
             -bomb5plus,                  # 5+线炸弹数
-            -len(self.straights),        # 顺子数
-            -len(self.boards),           # 木板数
+            -len(self.straights),        # 顺子数（同花顺 > 炸弹 > 顺子 > 钢板 > 木板 > 三带二）
             -len(self.steels),           # 钢板数
+            -len(self.boards),           # 木板数
             -len(self.three_with_twos),  # 三带二数
             -len(self.triples),          # 三张数
             -len(self.pairs),            # 对子数
