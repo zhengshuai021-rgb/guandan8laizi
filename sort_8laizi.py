@@ -615,9 +615,11 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
 
         natural_ranks = sorted(set(c.rank for c in taken if is_natural_rank(c)),
                                key=lambda r: RANK_ORDER[r])
-        for i in range(1, len(natural_ranks)):
-            if RANK_ORDER[natural_ranks[i]] != RANK_ORDER[natural_ranks[i-1]] + 1:
-                raise ValueError(f"Steel plate has non-consecutive ranks: {natural_ranks}")
+        # Ace-high 钢板 (K-A) 跳过连续校验（A=0, K=12，不满足+1条件但合法）
+        if si != -1:
+            for i in range(1, len(natural_ranks)):
+                if RANK_ORDER[natural_ranks[i]] != RANK_ORDER[natural_ranks[i-1]] + 1:
+                    raise ValueError(f"Steel plate has non-consecutive ranks: {natural_ranks}")
 
         steels.append(group)
 
