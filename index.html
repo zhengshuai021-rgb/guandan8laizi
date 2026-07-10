@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>八癞子掼蛋 — 一键理牌</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet"></noscript>
 <style>
 :root {
   --felt: #1a5c2a;
@@ -28,7 +29,7 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 
 body {
-  font-family: 'Noto Sans SC', sans-serif;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
   background:
     radial-gradient(ellipse at center, #1a6b30 0%, #0f3d1a 40%, #0a2812 100%),
     repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.015) 2px, rgba(255,255,255,0.015) 4px);
@@ -71,7 +72,7 @@ body::before {
   display:flex; justify-content:center; gap:16px; margin-bottom:28px; flex-wrap:wrap;
 }
 .btn {
-  font-family: 'Noto Sans SC', sans-serif;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
   padding:12px 36px; border-radius:6px; font-size:1rem; font-weight:500;
   cursor:pointer; transition:all 0.25s ease;
   border: 1px solid var(--gold);
@@ -832,7 +833,7 @@ function renderStrats(results, bestIdx) {
         <td>${r.meta.bomb_wilds}</td>
         <td style="text-align:left;font-size:0.7rem">${r.meta.order.slice(0,4).map(x=>groupTypeName(x).slice(0,2)).join('→')}</td>
         <td>${statCell(s.single, [2, 6])}</td>
-        <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb}</td>
+        <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb5plus || 0}</td>
         <td>${s.straight}</td><td>${s.board}</td><td>${s.steel}</td>
         <td>${s.three_two}</td><td>${s.triple}</td><td>${s.pair}</td>
       `;
@@ -876,6 +877,9 @@ function doClear() {
   document.getElementById('handDisplay').innerHTML = '<span style="color:var(--text-dim);font-size:0.9rem">点击「发牌」开始</span>';
   document.getElementById('zonesContainer').style.display = 'none';
   document.getElementById('stratsContainer').style.display = 'none';
+  document.getElementById('handHexBox').style.display = 'none';
+  document.getElementById('handHexText').textContent = '';
+  document.getElementById('sortHexText').textContent = '';
   document.getElementById('infoBar').style.display = 'none';
   document.getElementById('btnSort').disabled = true;
   document.getElementById('zones').innerHTML = '';

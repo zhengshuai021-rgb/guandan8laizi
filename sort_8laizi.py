@@ -20,6 +20,7 @@
 import sys
 import random
 import itertools
+import threading
 from collections import Counter, defaultdict
 from typing import Optional
 
@@ -61,9 +62,10 @@ BIG_JOKER_POWER = 17
 # ================================================================
 
 _card_cid_counter = 0
+_card_cid_lock = threading.Lock()
 
 class Card:
-    __slots__ = ('suit', 'rank', 'is_wild', 'power', 'value', 'cid')
+    __slots__ = ('suit', 'rank', 'is_wild', 'power', 'value', 'cid', 'used')
 
     def __init__(self, suit: str, rank: str, is_wild: bool = False, cid: int = None):
         global _card_cid_counter
@@ -73,8 +75,10 @@ class Card:
         if cid is not None:
             self.cid = cid
         else:
-            _card_cid_counter += 1
-            self.cid = _card_cid_counter
+            with _card_cid_lock:
+                _card_cid_counter += 1
+                self.cid = _card_cid_counter
+        self.used = False
         if is_wild:
             self.power = WILD_POWER
             self.value = 1
@@ -137,7 +141,7 @@ class CardGroup:
 # ================================================================
 
 def is_natural_rank(c: Card) -> bool:
-    return (not c.is_wild) and c.rank not in ("SJ", "BJ")
+    return (not c.is_wild) and c.rank not in ("SJ", "BJ") and not c.used
 
 
 def rank_counts(cards: list) -> dict:
@@ -164,17 +168,50 @@ def wilds_only(cards: list) -> list:
     return [c for c in cards if c.is_wild]
 
 
+def _mark_used(cards: list):
+    """Mark multiple cards as used (replaces pool.remove loop)."""
+    for c in cards:
+        c.used = True
+
+
+def _active_naturals(pool: list, rank: str) -> list:
+    """Get all active (not used) natural cards of a given rank from pool."""
+    return [c for c in pool if not c.used and not c.is_wild and c.rank == rank]
+
+
+def _reset_used(cards: list):
+    """Reset used flag for all cards (for reuse across strategy attempts)."""
+    for c in cards:
+        c.used = False
+
+
+def _active_wilds(wild_pool: list) -> list:
+    """Get wilds that haven't been consumed yet."""
+    return [c for c in wild_pool if not c.used]
+
+
+def _take_wilds(wild_pool: list, n: int) -> list:
+    """Take n wilds from pool, marking them used. Returns the taken cards."""
+    taken = []
+    for c in wild_pool:
+        if len(taken) >= n:
+            break
+        if not c.used:
+            c.used = True
+            taken.append(c)
+    return taken
+
+
 # ================================================================
 #  王炸提取
 # ================================================================
 
 def extract_king_bombs(pool: list) -> list:
     """提取王炸：4张大小王=1个王炸"""
-    jokers = [c for c in pool if c.rank in ("SJ", "BJ") and not c.is_wild]
+    jokers = [c for c in pool if c.rank in ("SJ", "BJ") and not c.is_wild and not c.used]
     if len(jokers) >= 4:
         taken = jokers[:4]
-        for c in taken:
-            pool.remove(c)
+        _mark_used(taken)
         return [CardGroup(taken, "king", FOUR_KING_POWER)]
     return []
 
@@ -184,7 +221,7 @@ def extract_king_bombs(pool: list) -> list:
 # ================================================================
 
 def extract_bombs(pool: list, wild_pool: list,
-                  max_wilds_for_bombs: int = 999) -> list:
+                   max_wilds_for_bombs: int = 999) -> list:
     """
     贪心提炸弹。从 pool(自然牌) 和 wild_pool(癞子) 中消耗。
     max_wilds_for_bombs: 最多用多少个癞子做炸弹。
@@ -196,16 +233,15 @@ def extract_bombs(pool: list, wild_pool: list,
       Phase 3: 纯癞子炸弹（4个癞子=1个炸弹）
     """
     rank_cnt = rank_counts(pool)
-    remaining = min(max_wilds_for_bombs, len(wild_pool))
+    remaining = min(max_wilds_for_bombs, len(_active_wilds(wild_pool)))
     bombs = []
 
     # Phase 0: 纯自然炸弹（>=4张，不消耗癞子）
     for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
         cnt = rank_cnt[rank]
         if cnt >= 4:
-            cards_nat = [c for c in pool if c.rank == rank and is_natural_rank(c)][:cnt]
-            for c in cards_nat:
-                pool.remove(c)
+            cards_nat = _active_naturals(pool, rank)[:cnt]
+            _mark_used(cards_nat)
             rank_cnt[rank] = 0
             power = cards_nat[0].power + cnt * 100
             bombs.append(CardGroup(cards_nat, "bomb", power))
@@ -218,12 +254,10 @@ def extract_bombs(pool: list, wild_pool: list,
                 continue
             need = 4 - cnt
             if need <= remaining:
-                cards_nat = [c for c in pool if c.rank == rank and is_natural_rank(c)][:cnt]
-                for c in cards_nat:
-                    pool.remove(c)
-                w = wild_pool[:need]
-                del wild_pool[:need]
-                remaining -= need
+                cards_nat = _active_naturals(pool, rank)[:cnt]
+                _mark_used(cards_nat)
+                w = _take_wilds(wild_pool, need)
+                remaining -= len(w)
                 rank_cnt[rank] = 0
                 power = cards_nat[0].power + 4 * 100
                 bombs.append(CardGroup(w + cards_nat, "bomb", power))
@@ -235,21 +269,18 @@ def extract_bombs(pool: list, wild_pool: list,
         if cnt < 4 or remaining <= 0:
             continue
         add = min(remaining, cnt)
-        cards_nat = [c for c in pool if c.rank == rank and is_natural_rank(c)][:cnt]
-        for c in cards_nat:
-            pool.remove(c)
-        w = wild_pool[:add]
-        del wild_pool[:add]
-        remaining -= add
-        total = cnt + add
+        cards_nat = _active_naturals(pool, rank)[:cnt]
+        _mark_used(cards_nat)
+        w = _take_wilds(wild_pool, add)
+        remaining -= len(w)
+        total = cnt + len(w)
         power = cards_nat[0].power + total * 100
         bombs.append(CardGroup(w + cards_nat, "bomb", power))
         rank_cnt[rank] = 0
 
     # Phase 3: 纯癞子炸弹（4个癞子=1个炸弹）
     while remaining >= 4:
-        w = wild_pool[:4]
-        del wild_pool[:4]
+        w = _take_wilds(wild_pool, 4)
         remaining -= 4
         bombs.append(CardGroup(w, "bomb", WILD_POWER + 4 * 100))
 
@@ -271,7 +302,7 @@ def extract_flush_straights(pool: list, wild_pool: list,
     suit_priority: 花色处理顺序，None 则使用 SUITS 默认顺序。
     max_flushes: 最多创建几个同花顺。
     """
-    remaining = min(max_wilds_for_flush, len(wild_pool))
+    remaining = min(max_wilds_for_flush, len(_active_wilds(wild_pool)))
     flushes = []
     suit_map = suit_groups(pool)
 
@@ -292,7 +323,7 @@ def extract_flush_straights(pool: list, wild_pool: list,
             cards = suit_map.get(suit, [])
             if not cards:
                 continue
-            suit_ranks = set(RANK_ORDER[c.rank] for c in cards)
+            suit_ranks = set(RANK_ORDER[c.rank] for c in cards if not c.used)
             for start, end, ace_high in WINDOWS:
                 wilds = 0
                 if ace_high:
@@ -320,7 +351,7 @@ def extract_flush_straights(pool: list, wild_pool: list,
         if not cards:
             continue
 
-        suit_ranks = set(RANK_ORDER[c.rank] for c in cards)
+        suit_ranks = set(RANK_ORDER[c.rank] for c in cards if not c.used)
 
         best = None  # (start_idx, wilds_needed, ace_high)
 
@@ -353,31 +384,28 @@ def extract_flush_straights(pool: list, wild_pool: list,
         taken = []
         if ace_high:
             for ri in range(start, 13):
-                for c in list(pool):
-                    if (c.suit == suit and is_natural_rank(c)
-                            and RANK_ORDER.get(c.rank) == ri):
+                for c in cards:
+                    if not c.used and RANK_ORDER.get(c.rank) == ri:
                         taken.append(c)
-                        pool.remove(c)
+                        c.used = True
                         break  # 每 rank 只取 1 张
-            for c in list(pool):
-                if c.suit == suit and c.rank == "A" and is_natural_rank(c):
+            for c in cards:
+                if not c.used and c.rank == "A":
                     taken.append(c)
-                    pool.remove(c)
+                    c.used = True
                     break
         else:
             end = start + 4
             for ri in range(start, end + 1):
-                for c in list(pool):
-                    if (c.suit == suit and is_natural_rank(c)
-                            and RANK_ORDER.get(c.rank) == ri):
+                for c in cards:
+                    if not c.used and RANK_ORDER.get(c.rank) == ri:
                         taken.append(c)
-                        pool.remove(c)
+                        c.used = True
                         break  # 每 rank 只取 1 张
 
         # 消耗癞子
-        w = wild_pool[:wilds_needed]
-        del wild_pool[:wilds_needed]
-        remaining -= wilds_needed
+        w = _take_wilds(wild_pool, wilds_needed)
+        remaining -= len(w)
 
         all_cards = w + taken
         first_nat_idx = next((i for i, c in enumerate(all_cards) if not c.is_wild), 0)
@@ -399,8 +427,6 @@ def extract_straights(pool: list, wild_pool: list) -> list:
     掼蛋顺子只能是5连张。支持A作为高牌（10-J-Q-K-A）。"""
     straights = []
     rank_cnt = rank_counts(pool)
-    n_wilds = len(wild_pool)
-
     while True:
         available = sorted(
             (r for r, c in rank_cnt.items() if c > 0),
@@ -408,6 +434,8 @@ def extract_straights(pool: list, wild_pool: list) -> list:
         )
         if len(available) < 2:
             break
+
+        n_wilds = len(_active_wilds(wild_pool))
 
         # 搜索所有恰好5连续的窗口（普通 + Ace高牌）
         best = None  # (start_idx, needed_wilds, is_ace_high)
@@ -447,30 +475,28 @@ def extract_straights(pool: list, wild_pool: list) -> list:
             for ri in [9, 10, 11, 12]:  # 10, J, Q, K
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
-                    c = next((x for x in pool if x.rank == r and is_natural_rank(x)), None)
+                    c = next((x for x in pool if not x.used and x.rank == r and not x.is_wild), None)
                     if c:
-                        pool.remove(c)
+                        c.used = True
                         taken.append(c)
                         rank_cnt[r] = max(0, rank_cnt[r] - 1)
             if rank_cnt.get("A", 0) > 0:
-                c = next((x for x in pool if x.rank == "A" and is_natural_rank(x)), None)
+                c = next((x for x in pool if not x.used and x.rank == "A" and not x.is_wild), None)
                 if c:
-                    pool.remove(c)
+                    c.used = True
                     taken.append(c)
                     rank_cnt["A"] = max(0, rank_cnt["A"] - 1)
         else:
             for ri in range(si_idx, si_idx + 5):
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
-                    c = next((x for x in pool if x.rank == r and is_natural_rank(x)), None)
+                    c = next((x for x in pool if not x.used and x.rank == r and not x.is_wild), None)
                     if c:
-                        pool.remove(c)
+                        c.used = True
                         taken.append(c)
                         rank_cnt[r] = max(0, rank_cnt[r] - 1)
 
-        w = wild_pool[:needed]
-        del wild_pool[:needed]
-        n_wilds -= needed
+        w = _take_wilds(wild_pool, needed)
 
         power = taken[0].power + 4 if taken else 0
         straights.append(CardGroup(w + taken, "straight", power))
@@ -487,9 +513,9 @@ def extract_boards(pool: list, wild_pool: list) -> list:
     支持用癞子补到2张（即某rank可以0自然牌+2癞子组对）。"""
     boards = []
     rank_cnt = rank_counts(pool)
-    n_wilds = len(wild_pool)
 
     while True:
+        n_wilds = len(_active_wilds(wild_pool))
         # 包含所有可能组对的rank（含纯癞子对）
         available = sorted(
             (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 2),
@@ -531,15 +557,12 @@ def extract_boards(pool: list, wild_pool: list) -> list:
         taken = []
         for r in ranks_to_take:
             cnt = rank_cnt.get(r, 0)
-            cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 2)]
-            for c in cards:
-                pool.remove(c)
-                taken.append(c)
-                rank_cnt[r] = max(0, rank_cnt[r] - 1)
+            cards = _active_naturals(pool, r)[:min(cnt, 2)]
+            _mark_used(cards)
+            taken.extend(cards)
+            rank_cnt[r] = max(0, cnt - len(cards))
 
-        w = wild_pool[:needed]
-        del wild_pool[:needed]
-        n_wilds -= needed
+        w = _take_wilds(wild_pool, needed)
 
         power = taken[0].power if taken else WILD_POWER
         boards.append(CardGroup(w + taken, "board", power))
@@ -556,9 +579,9 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
     支持用癞子补到3张（即某rank可以0自然牌+3癞子组三张）。"""
     steels = []
     rank_cnt = rank_counts(pool)
-    n_wilds = len(wild_pool)
 
     while True:
+        n_wilds = len(_active_wilds(wild_pool))
         # 包含所有可能组三张的rank（含纯癞子三张）
         available = sorted(
             (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 3),
@@ -600,20 +623,17 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
         taken = []
         for r in ranks_to_take:
             cnt = rank_cnt.get(r, 0)
-            cards = [c for c in pool if c.rank == r and is_natural_rank(c)][:min(cnt, 3)]
-            for c in cards:
-                pool.remove(c)
-                taken.append(c)
-                rank_cnt[r] = max(0, rank_cnt[r] - 1)
+            cards = _active_naturals(pool, r)[:min(cnt, 3)]
+            _mark_used(cards)
+            taken.extend(cards)
+            rank_cnt[r] = max(0, cnt - len(cards))
 
-        w = wild_pool[:needed]
-        del wild_pool[:needed]
-        n_wilds -= needed
+        w = _take_wilds(wild_pool, needed)
 
         power = taken[0].power if taken else WILD_POWER
         group = CardGroup(w + taken, "steel", power)
 
-        natural_ranks = sorted(set(c.rank for c in taken if is_natural_rank(c)),
+        natural_ranks = sorted(set(c.rank for c in taken if not c.is_wild),
                                key=lambda r: RANK_ORDER[r])
         # Ace-high 钢板 (K-A) 跳过连续校验（A=0, K=12，不满足+1条件但合法）
         if si != -1:
@@ -635,9 +655,9 @@ def extract_three_with_two(pool: list, wild_pool: list,
     """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过J）。"""
     twt_list = []
     rank_cnt = rank_counts(pool)
-    n_wilds = len(wild_pool)
 
     while True:
+        n_wilds = len(_active_wilds(wild_pool))
         # 找可用的三张rank
         triple_candidates = sorted(
             [(r, c) for r, c in rank_cnt.items() if c + n_wilds >= 3 and c > 0],
@@ -669,22 +689,17 @@ def extract_three_with_two(pool: list, wild_pool: list,
             break
 
         # 提取三张
-        triple_cards = [c for c in pool if c.rank == tr and is_natural_rank(c)][:tcnt]
-        for c in triple_cards:
-            pool.remove(c)
-            rank_cnt[tr] = max(0, rank_cnt[tr] - 1)
+        triple_cards = _active_naturals(pool, tr)[:tcnt]
+        _mark_used(triple_cards)
+        rank_cnt[tr] = max(0, rank_cnt[tr] - len(triple_cards))
 
         # 提取对子（最多2张）
-        pair_cards = [c for c in pool if c.rank == pr and is_natural_rank(c)][:min(pcnt, 2)]
-        for c in pair_cards:
-            pool.remove(c)
-            rank_cnt[pr] = max(0, rank_cnt[pr] - 1)
+        pair_cards = _active_naturals(pool, pr)[:min(pcnt, 2)]
+        _mark_used(pair_cards)
+        rank_cnt[pr] = max(0, rank_cnt[pr] - len(pair_cards))
 
-        triple_wilds = wild_pool[:need_triple]
-        del wild_pool[:need_triple]
-        pair_wilds = wild_pool[:need_pair]
-        del wild_pool[:need_pair]
-        n_wilds -= total_need
+        triple_wilds = _take_wilds(wild_pool, need_triple)
+        pair_wilds = _take_wilds(wild_pool, need_pair)
 
         power = triple_cards[0].power if triple_cards else (
             triple_wilds[0].power if triple_wilds else WILD_POWER
@@ -709,16 +724,14 @@ def extract_remaining(pool: list, wild_pool: list) -> tuple:
     # 三张
     for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
         cnt = rank_cnt[rank]
-        while cnt + len(wild_pool) >= 3 and cnt >= 1:
+        while cnt + len(_active_wilds(wild_pool)) >= 3 and cnt >= 1:
             take = min(cnt, 3)
-            cards = [c for c in pool if c.rank == rank and is_natural_rank(c)][:take]
+            cards = _active_naturals(pool, rank)[:take]
             need = 3 - take
-            for c in cards:
-                pool.remove(c)
-                rank_cnt[rank] = max(0, rank_cnt[rank] - 1)
-                cnt -= 1
-            w = wild_pool[:need]
-            del wild_pool[:need]
+            _mark_used(cards)
+            rank_cnt[rank] = max(0, rank_cnt[rank] - len(cards))
+            cnt -= len(cards)
+            w = _take_wilds(wild_pool, need)
             triples.append(CardGroup(w + cards, "triple",
                                      cards[0].power if cards else WILD_POWER))
 
@@ -726,36 +739,36 @@ def extract_remaining(pool: list, wild_pool: list) -> tuple:
     rank_cnt = rank_counts(pool)
     for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
         cnt = rank_cnt[rank]
-        while cnt + len(wild_pool) >= 2 and cnt >= 1:
+        while cnt + len(_active_wilds(wild_pool)) >= 2 and cnt >= 1:
             take = min(cnt, 2)
-            cards = [c for c in pool if c.rank == rank and is_natural_rank(c)][:take]
+            cards = _active_naturals(pool, rank)[:take]
             need = 2 - take
-            for c in cards:
-                pool.remove(c)
-                rank_cnt[rank] = max(0, rank_cnt[rank] - 1)
-                cnt -= 1
-            w = wild_pool[:need]
-            del wild_pool[:need]
+            _mark_used(cards)
+            rank_cnt[rank] = max(0, rank_cnt[rank] - len(cards))
+            cnt -= len(cards)
+            w = _take_wilds(wild_pool, need)
             pairs.append(CardGroup(w + cards, "pair",
                                    cards[0].power if cards else WILD_POWER))
 
     # 大小王对子（2小王=对子，2大王=对子）
     for joker_rank in ("SJ", "BJ"):
-        jokers = [c for c in pool if c.rank == joker_rank]
+        jokers = [c for c in pool if c.rank == joker_rank and not c.used]
         while len(jokers) >= 2:
             take = jokers[:2]
-            for c in take:
-                pool.remove(c)
+            _mark_used(take)
             pairs.append(CardGroup(take, "pair", take[0].power))
             jokers = jokers[2:]
 
-    # 单张（剩余所有）
-    for c in list(pool):
-        pool.remove(c)
-        singles.append(CardGroup([c], "single", c.power))
-    for c in list(wild_pool):
-        wild_pool.remove(c)
-        singles.append(CardGroup([c], "single", c.power))
+    # 单张（剩余所有自然牌）
+    for c in pool:
+        if not c.used:
+            c.used = True
+            singles.append(CardGroup([c], "single", c.power))
+    # 单张（剩余癞子）
+    for c in wild_pool:
+        if not c.used:
+            c.used = True
+            singles.append(CardGroup([c], "single", c.power))
 
     return triples, pairs, singles
 
@@ -848,8 +861,13 @@ def execute_strategy(natural_cards: list, wild_cards: list,
     
     bomb_wilds: 给炸弹预留的癞子数量上限
     """
-    pool = list(natural_cards)
-    wp = list(wild_cards)
+    # Reset used flags (cards are reused across strategy attempts)
+    _reset_used(natural_cards)
+    for c in wild_cards:
+        c.used = False
+
+    pool = natural_cards  # no copy needed — using used flags
+    wp = wild_cards
     n_lz = len(wp)
 
     result = SortResult()
@@ -895,40 +913,39 @@ def execute_strategy(natural_cards: list, wild_cards: list,
 # ================================================================
 
 def try_all_strategies(natural_cards: list, wild_cards: list) -> SortResult:
-    """枚举所有策略组合，返回最优"""
+    """枚举所有策略组合，返回最优。带去重和剪枝。"""
     n_lz = len(wild_cards)
     best = None
+
+    # 去重：记录已计算的 (strategy, bomb_wilds, order) 签名
+    seen = set()
+
+    def try_one(strategy, bomb_wilds, order):
+        nonlocal best
+        key = (strategy, bomb_wilds, order)
+        if key in seen:
+            return
+        seen.add(key)
+        result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order)
+        if best is None or result.score() < best.score():
+            best = result
 
     # 方案O: 同花顺先于炸弹，尝试不同 bomb_wilds
     for bomb_wilds in range(n_lz + 1):
         for order in EXTRACTION_ORDERS:
-            result = execute_strategy(
-                list(natural_cards), list(wild_cards),
-                "O_flush_first", bomb_wilds, order
-            )
-            if best is None or result.score() < best.score():
-                best = result
+            try_one("O_flush_first", bomb_wilds, order)
 
     # 方案N: 炸弹先于同花顺
+    # 去重：bomb_wilds >= n_lz 时与 bomb_wilds=n_lz 等价（不会有更多癞子可用）
     for bomb_wilds in range(n_lz + 1):
         for order in EXTRACTION_ORDERS:
-            result = execute_strategy(
-                list(natural_cards), list(wild_cards),
-                "N_bomb_first", bomb_wilds, order
-            )
-            if best is None or result.score() < best.score():
-                best = result
+            try_one("N_bomb_first", bomb_wilds, order)
 
     # 方案O (去掉顺子，即 order 中没有 "straight")
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
     for bomb_wilds in range(n_lz + 1):
         for order in orders_no_straight:
-            result = execute_strategy(
-                list(natural_cards), list(wild_cards),
-                "O_flush_first", bomb_wilds, order
-            )
-            if best is None or result.score() < best.score():
-                best = result
+            try_one("O_flush_first", bomb_wilds, order)
 
     return best
 
@@ -967,6 +984,7 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
     n_lz = len(wild_cards)
 
     all_results = []
+    seen = set()
 
     def add_result(result: SortResult, meta: dict):
         bombs = result.bombs_output
@@ -989,8 +1007,12 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
     # 方案O: 同花顺先于炸弹
     for bomb_wilds in range(n_lz + 1):
         for order in EXTRACTION_ORDERS:
+            key = ("O_flush_first", bomb_wilds, order)
+            if key in seen:
+                continue
+            seen.add(key)
             result = execute_strategy(
-                list(natural_cards), list(wild_cards),
+                natural_cards, wild_cards,
                 "O_flush_first", bomb_wilds, order
             )
             add_result(result, {
@@ -1000,10 +1022,15 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
             })
 
     # 方案O_single: 同花先但最多只做1个同花顺（避免贪心消耗过多自然牌）
+    # 去重：bomb_wilds=0 时 O_flush_single 与 O_flush_first 等价
     for bomb_wilds in range(n_lz + 1):
         for order in EXTRACTION_ORDERS:
+            key = ("O_flush_single", bomb_wilds, order)
+            if key in seen:
+                continue
+            seen.add(key)
             result = execute_strategy(
-                list(natural_cards), list(wild_cards),
+                natural_cards, wild_cards,
                 "O_flush_single", bomb_wilds, order
             )
             add_result(result, {
@@ -1015,8 +1042,12 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
     # 方案N: 炸弹先于同花顺
     for bomb_wilds in range(n_lz + 1):
         for order in EXTRACTION_ORDERS:
+            key = ("N_bomb_first", bomb_wilds, order)
+            if key in seen:
+                continue
+            seen.add(key)
             result = execute_strategy(
-                list(natural_cards), list(wild_cards),
+                natural_cards, wild_cards,
                 "N_bomb_first", bomb_wilds, order
             )
             add_result(result, {
@@ -1029,8 +1060,12 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
     for bomb_wilds in range(n_lz + 1):
         for order in orders_no_straight:
+            key = ("O_flush_no_straight", bomb_wilds, order)
+            if key in seen:
+                continue
+            seen.add(key)
             result = execute_strategy(
-                list(natural_cards), list(wild_cards),
+                natural_cards, wild_cards,
                 "O_flush_first", bomb_wilds, order
             )
             add_result(result, {
@@ -1077,6 +1112,7 @@ def _result_stats(result: SortResult) -> dict:
         "steel": len(result.steels),
         "flush": len(result.flushes),
         "bomb": len(result.bombs),
+        "bomb5plus": sum(1 for b in result.bombs if b.size >= 5),
         "king": len(result.kings),
     }
 

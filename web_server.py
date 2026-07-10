@@ -12,6 +12,7 @@ if sys.platform == 'win32':
 from sort_8laizi import (
     Card, deal_random_hand, cards_to_json, cards_to_hex, card_to_hex, sort_8laizi_with_details,
     build_full_deck_cards, validate_deal, build_full_deck, SUITS, RANKS,
+    RANK_HEX, SUIT_CODE,
 )
 
 app = Flask(__name__, static_folder=None)
@@ -105,13 +106,20 @@ def api_sort():
 
     result = sort_8laizi_with_details(hand_cards)
     result["best_index"] = 0
-    # 为每个 zone 的 cards 添加 hex 编码
+    # 为每个 zone 的 cards 添加 hex 编码（直接从 dict 计算，避免重复创建 Card）
     for zone_name, groups in result.get("zones", {}).items():
         for g in groups:
-            g["cards_hex"] = ",".join(card_to_hex(Card(
-                suit=c["suit"], rank=c["rank"],
-                is_wild=c.get("is_wild", False), cid=c.get("cid", 0),
-            )) for c in g["cards"]) if "cards" in g else ""
+            hex_parts = []
+            for c in g.get("cards", []):
+                suit = c["suit"]
+                rank = c["rank"]
+                if rank in ("SJ", "BJ"):
+                    color = SUIT_CODE[rank]
+                else:
+                    color = SUIT_CODE.get(suit, 0)
+                value = RANK_HEX.get(rank, 0)
+                hex_parts.append(f"0x{color:X}{value:X}")
+            g["cards_hex"] = ",".join(hex_parts)
     return jsonify(result)
 
 
