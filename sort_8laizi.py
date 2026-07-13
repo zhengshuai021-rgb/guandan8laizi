@@ -422,11 +422,13 @@ def extract_flush_straights(pool: list, wild_pool: list,
 #  顺子提取
 # ================================================================
 
-def extract_straights(pool: list, wild_pool: list) -> list:
+def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list:
     """贪心提顺子（恰好5张连续，不限花色）。用癞子补断口。
-    掼蛋顺子只能是5连张。支持A作为高牌（10-J-Q-K-A）。"""
+    掼蛋顺子只能是5连张。支持A作为高牌（10-J-Q-K-A）。
+    max_wilds: 最多用多少个癞子做顺子。"""
     straights = []
     rank_cnt = rank_counts(pool)
+    wilds_used = 0
     while True:
         available = sorted(
             (r for r, c in rank_cnt.items() if c > 0),
@@ -435,7 +437,7 @@ def extract_straights(pool: list, wild_pool: list) -> list:
         if len(available) < 2:
             break
 
-        n_wilds = len(_active_wilds(wild_pool))
+        n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
 
         # 搜索所有恰好5连续的窗口（普通 + Ace高牌）
         best = None  # (start_idx, needed_wilds, is_ace_high)
@@ -497,6 +499,7 @@ def extract_straights(pool: list, wild_pool: list) -> list:
                         rank_cnt[r] = max(0, rank_cnt[r] - 1)
 
         w = _take_wilds(wild_pool, needed)
+        wilds_used += len(w)
 
         power = taken[0].power + 4 if taken else 0
         straights.append(CardGroup(w + taken, "straight", power))
@@ -508,14 +511,16 @@ def extract_straights(pool: list, wild_pool: list) -> list:
 #  木板提取（连对：恰好3个连续rank各有>=2张）
 # ================================================================
 
-def extract_boards(pool: list, wild_pool: list) -> list:
+def extract_boards(pool: list, wild_pool: list, max_wilds: int = 999) -> list:
     """贪心提木板（连对：恰好3个连续rank各>=2张）。掼蛋木板只能是3连对。
-    支持用癞子补到2张（即某rank可以0自然牌+2癞子组对）。"""
+    支持用癞子补到2张（即某rank可以0自然牌+2癞子组对）。
+    max_wilds: 最多用多少个癞子做木板。"""
     boards = []
     rank_cnt = rank_counts(pool)
+    wilds_used = 0
 
     while True:
-        n_wilds = len(_active_wilds(wild_pool))
+        n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
         # 包含所有可能组对的rank（含纯癞子对）
         available = sorted(
             (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 2),
@@ -563,6 +568,7 @@ def extract_boards(pool: list, wild_pool: list) -> list:
             rank_cnt[r] = max(0, cnt - len(cards))
 
         w = _take_wilds(wild_pool, needed)
+        wilds_used += len(w)
 
         power = taken[0].power if taken else WILD_POWER
         boards.append(CardGroup(w + taken, "board", power))
@@ -574,14 +580,16 @@ def extract_boards(pool: list, wild_pool: list) -> list:
 #  钢板提取（恰好2个连续rank各有>=3张）
 # ================================================================
 
-def extract_steel_plates(pool: list, wild_pool: list) -> list:
+def extract_steel_plates(pool: list, wild_pool: list, max_wilds: int = 999) -> list:
     """贪心提钢板（恰好2个连续rank各>=3张）。掼蛋钢板只能是2连三张。
-    支持用癞子补到3张（即某rank可以0自然牌+3癞子组三张）。"""
+    支持用癞子补到3张（即某rank可以0自然牌+3癞子组三张）。
+    max_wilds: 最多用多少个癞子做钢板。"""
     steels = []
     rank_cnt = rank_counts(pool)
+    wilds_used = 0
 
     while True:
-        n_wilds = len(_active_wilds(wild_pool))
+        n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
         # 包含所有可能组三张的rank（含纯癞子三张）
         available = sorted(
             (r for r in RANKS if rank_cnt.get(r, 0) + n_wilds >= 3),
@@ -629,6 +637,7 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
             rank_cnt[r] = max(0, cnt - len(cards))
 
         w = _take_wilds(wild_pool, needed)
+        wilds_used += len(w)
 
         power = taken[0].power if taken else WILD_POWER
         group = CardGroup(w + taken, "steel", power)
@@ -651,13 +660,16 @@ def extract_steel_plates(pool: list, wild_pool: list) -> list:
 # ================================================================
 
 def extract_three_with_two(pool: list, wild_pool: list,
-                           max_pair_value: int = 11) -> list:
-    """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过J）。"""
+                           max_pair_value: int = 11,
+                           max_wilds: int = 999) -> list:
+    """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过J）。
+    max_wilds: 最多用多少个癞子做三带二。"""
     twt_list = []
     rank_cnt = rank_counts(pool)
+    wilds_used = 0
 
     while True:
-        n_wilds = len(_active_wilds(wild_pool))
+        n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
         # 找可用的三张rank
         triple_candidates = sorted(
             [(r, c) for r, c in rank_cnt.items() if c + n_wilds >= 3 and c > 0],
@@ -700,6 +712,7 @@ def extract_three_with_two(pool: list, wild_pool: list,
 
         triple_wilds = _take_wilds(wild_pool, need_triple)
         pair_wilds = _take_wilds(wild_pool, need_pair)
+        wilds_used += len(triple_wilds) + len(pair_wilds)
 
         power = triple_cards[0].power if triple_cards else (
             triple_wilds[0].power if triple_wilds else WILD_POWER
@@ -795,12 +808,23 @@ class SortResult:
 
     def score(self) -> tuple:
         bomb5plus = sum(1 for b in self.bombs if b.size >= 5)
+        # 核心权衡：1个4线炸弹 ≈ 消化2.5张"本来会成为单张/对子"的牌
+        # 所以 bomb 权重设为 2.5，让"多1炸弹但多1单张"的方案在接近时胜出
+        # 公式：frag_score = singles + pairs*0.5 + triples*0.3 - bombs*2.5 - flushes*2.5
+        frag_score = (
+            len(self.singles)
+            + len(self.pairs) * 0.5
+            + len(self.triples) * 0.3
+            - len(self.bombs) * 2.5
+            - len(self.flushes) * 2.5
+        )
         return (
-            len(self.singles),           # 单张数（越小越好 — 减少手牌碎片化）
-            -len(self.bombs),            # 炸弹数
-            -len(self.flushes),          # 同花顺数
+            # ① 加权碎片分（越小越好 — 综合考虑单张数和炸弹数的平衡）
+            frag_score,
+            # ② 以下为 tiebreaker，在 frag_score 相同时决定胜负
+            len(self.singles),           # 单张数（绝对值，越少越好）
             -bomb5plus,                  # 5+线炸弹数
-            -len(self.straights),        # 顺子数（同花顺 > 炸弹 > 顺子 > 钢板 > 木板 > 三带二）
+            -len(self.straights),        # 顺子数
             -len(self.steels),           # 钢板数
             -len(self.boards),           # 木板数
             -len(self.three_with_twos),  # 三带二数
@@ -844,6 +868,99 @@ EXTRACTION_ORDERS = list(itertools.permutations(
     ["straight", "board", "steel", "three_two"]
 ))
 
+# 4 种牌型 key（用于预算分配）
+BUDGET_TYPES = ["straight", "board", "steel", "three_two"]
+
+
+# ================================================================
+#  癞子预算配置表（laiziLimit_config）
+# ================================================================
+#
+# 人为约束每种牌型在提取时最多能消耗的癞子数量。
+# 用于裁剪搜索空间 + 表达用户策略偏好。
+#
+# 格式：{牌型key: 最大癞子数}
+#   - 设为 999 表示不限制（等同于不配）
+#   - 设为 0   表示禁止该牌型使用癞子（纯自然牌才能组）
+#
+# 使用方式：
+#   1. 全局默认约束：直接修改 LAIZI_LIMIT_CONFIG_DEFAULT
+#   2. 单次调用覆盖：sort_8laizi_with_details(cards, laizi_limit={...})
+#   3. 动态生成预算组合：generate_wild_budgets() 会读此配置作为上界
+
+LAIZI_LIMIT_CONFIG_DEFAULT = {
+    #                    含义
+    "straight":  999,   # 顺子：最多用几张癞子补断口
+    "board":     999,   # 木板（连对）：最多用几张癞子补对
+    "steel":     999,   # 钢板（连三）：最多用几张癞子补三张
+    "three_two": 999,   # 三带二：最多用几张癞子（三张+对子合计）
+    # 高级区域也可约束（作用于炸弹/同花顺层）
+    "bomb":      999,   # 炸弹：最多用几张癞子
+    "flush":     999,   # 同花顺：最多用几张癞子
+}
+
+
+def get_laizi_limit(key, config=None):
+    """读取某牌型的癞子上限。config=None 时用全局默认。"""
+    cfg = config if config else LAIZI_LIMIT_CONFIG_DEFAULT
+    return cfg.get(key, 999)
+
+
+# ================================================================
+#  癞子预算分配方案生成
+# ================================================================
+
+def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, order):
+    """
+    用不限制 budget 的方式跑一次 execute_strategy，
+    返回每种牌型实际消耗的癞子数。
+    这样后续只需在 [0, actual] 范围内枚举 budget，大幅削减无用组合。
+    """
+    result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
+                              wild_budgets=None)  # None = 不限制
+
+    usage = {}
+    usage["straight"] = sum(g.wild_count for g in result.straights)
+    usage["board"] = sum(g.wild_count for g in result.boards)
+    usage["steel"] = sum(g.wild_count for g in result.steels)
+    usage["three_two"] = sum(g.wild_count for g in result.three_with_twos)
+    return usage, result
+
+
+def generate_wild_budgets(n_remaining, config=None, caps_override=None):
+    """
+    将 n_remaining 个癞子分配到 4 个牌型（straight/board/steel/three_two），
+    生成所有可能的预算组合。
+
+    caps_override: 各牌型的实际上限 dict，如 {"straight": 2, "board": 1, ...}
+                   优先于 config。由 _probe_actual_wild_usage 计算。
+    config: laiziLimit 配置（人为约束上限）
+    """
+    results = []
+
+    caps = []
+    for t in BUDGET_TYPES:
+        cap = n_remaining  # 默认不限制
+        if caps_override:
+            cap = min(cap, caps_override.get(t, n_remaining))
+        cap_config = get_laizi_limit(t, config)
+        cap = min(cap, cap_config)
+        caps.append(cap)
+
+    def _allocate(remaining, idx, current):
+        if idx == len(BUDGET_TYPES):
+            results.append(dict(current))
+            return
+        cap = min(caps[idx], remaining)
+        t = BUDGET_TYPES[idx]
+        for w in range(cap + 1):
+            current[t] = w
+            _allocate(remaining - w, idx + 1, current)
+        current[t] = 0
+
+    _allocate(n_remaining, 0, {})
+    return results
+
 
 # ================================================================
 #  执行一种策略
@@ -851,30 +968,39 @@ EXTRACTION_ORDERS = list(itertools.permutations(
 
 def execute_strategy(natural_cards: list, wild_cards: list,
                      strategy: str, bomb_wilds: int,
-                     extraction_order: tuple) -> SortResult:
+                     extraction_order: tuple,
+                     wild_budgets: dict = None) -> SortResult:
     """
     执行一种理牌策略。
     
     strategy:
       "O_flush_first"  - 同花顺先于炸弹
+      "O_flush_single" - 同花顺先于炸弹，但最多1个同花顺
       "N_bomb_first"   - 炸弹先于同花顺
     
     bomb_wilds: 给炸弹预留的癞子数量上限
+    
+    wild_budgets: 顺子/木板/钢板/三带二 的癞子预算上限，格式：
+      {"straight": N, "board": N, "steel": N, "three_two": N}
+      None 或缺省项 = 不限制（999）
     """
-    # Reset used flags (cards are reused across strategy attempts)
     _reset_used(natural_cards)
     for c in wild_cards:
         c.used = False
 
-    pool = natural_cards  # no copy needed — using used flags
+    pool = natural_cards
     wp = wild_cards
     n_lz = len(wp)
+
+    def _budget(key):
+        if wild_budgets:
+            return wild_budgets.get(key, 999)
+        return 999
 
     result = SortResult()
     result.kings = extract_king_bombs(pool)
 
     if strategy in ("O_flush_first", "O_flush_single"):
-        # 方案O: 同花顺 -> 炸弹
         max_f = 1 if strategy == "O_flush_single" else 999
         suit_counts = defaultdict(int)
         for c in pool:
@@ -887,22 +1013,19 @@ def execute_strategy(natural_cards: list, wild_cards: list,
                                                  max_flushes=max_f)
         result.bombs = extract_bombs(pool, wp, bomb_wilds)
     elif strategy == "N_bomb_first":
-        # 方案N: 炸弹 -> 同花顺
         result.bombs = extract_bombs(pool, wp, bomb_wilds)
         result.flushes = extract_flush_straights(pool, wp)
 
-    # 按顺序提取 顺子/木板/钢板/三带二
     for ext_type in extraction_order:
         if ext_type == "straight":
-            result.straights = extract_straights(pool, wp)
+            result.straights = extract_straights(pool, wp, max_wilds=_budget("straight"))
         elif ext_type == "board":
-            result.boards = extract_boards(pool, wp)
+            result.boards = extract_boards(pool, wp, max_wilds=_budget("board"))
         elif ext_type == "steel":
-            result.steels = extract_steel_plates(pool, wp)
+            result.steels = extract_steel_plates(pool, wp, max_wilds=_budget("steel"))
         elif ext_type == "three_two":
-            result.three_with_twos = extract_three_with_two(pool, wp)
+            result.three_with_twos = extract_three_with_two(pool, wp, max_wilds=_budget("three_two"))
 
-    # 三张/对子/单张
     result.triples, result.pairs, result.singles = extract_remaining(pool, wp)
 
     return result
@@ -912,55 +1035,69 @@ def execute_strategy(natural_cards: list, wild_cards: list,
 #  主算法
 # ================================================================
 
-def try_all_strategies(natural_cards: list, wild_cards: list) -> SortResult:
-    """枚举所有策略组合，返回最优。带去重和剪枝。"""
+def try_all_strategies(natural_cards: list, wild_cards: list,
+                       laizi_limit: dict = None) -> SortResult:
+    """
+    枚举所有策略组合，返回最优。带去重和剪枝。
+    
+    laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
+                 None 则用全局默认配置。
+    """
     n_lz = len(wild_cards)
     best = None
+    seen_results = set()
 
-    # 去重：记录已计算的 (strategy, bomb_wilds, order) 签名
-    seen = set()
-
-    def try_one(strategy, bomb_wilds, order):
+    def try_one(strategy, bomb_wilds, order, budgets):
         nonlocal best
-        key = (strategy, bomb_wilds, order)
-        if key in seen:
+        result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
+                                  wild_budgets=budgets)
+        sig = result.score()
+        if sig in seen_results:
             return
-        seen.add(key)
-        result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order)
+        seen_results.add(sig)
         if best is None or result.score() < best.score():
             best = result
 
-    # 方案O: 同花顺先于炸弹，尝试不同 bomb_wilds
-    for bomb_wilds in range(n_lz + 1):
-        for order in EXTRACTION_ORDERS:
-            try_one("O_flush_first", bomb_wilds, order)
+    def _run_group(strategy, orders):
+        nonlocal best
+        for bomb_wilds in range(n_lz + 1):
+            remaining = n_lz - bomb_wilds
+            for order in orders:
+                # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗
+                usage, probe_result = _probe_actual_wild_usage(
+                    natural_cards, wild_cards, strategy, bomb_wilds, order)
+                # probe 结果本身也是一个候选
+                sig = probe_result.score()
+                if sig not in seen_results:
+                    seen_results.add(sig)
+                    if best is None or probe_result.score() < best.score():
+                        best = probe_result
+                # 只在实际消耗范围内枚举 budget
+                all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                for budgets in all_budgets:
+                    try_one(strategy, bomb_wilds, order, budgets)
 
-    # 方案N: 炸弹先于同花顺
-    # 去重：bomb_wilds >= n_lz 时与 bomb_wilds=n_lz 等价（不会有更多癞子可用）
-    for bomb_wilds in range(n_lz + 1):
-        for order in EXTRACTION_ORDERS:
-            try_one("N_bomb_first", bomb_wilds, order)
-
-    # 方案O (去掉顺子，即 order 中没有 "straight")
+    _run_group("O_flush_first", EXTRACTION_ORDERS)
+    _run_group("N_bomb_first", EXTRACTION_ORDERS)
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
-    for bomb_wilds in range(n_lz + 1):
-        for order in orders_no_straight:
-            try_one("O_flush_first", bomb_wilds, order)
+    _run_group("O_flush_first", orders_no_straight)
 
     return best
 
 
-def sort_8laizi(hand_cards: list) -> tuple:
+def sort_8laizi(hand_cards: list, laizi_limit: dict = None) -> tuple:
     """
     八癞子一键理牌主入口。
     
     返回 (bombs, others):
       bombs  - 王炸 + 同花顺 + 炸弹（炸弹区）
       others - 顺子/木板/钢板/三带二/三张/对子/单张
+    
+    laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
-    best = try_all_strategies(natural_cards, wild_cards)
+    best = try_all_strategies(natural_cards, wild_cards, laizi_limit=laizi_limit)
 
     if best is None:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
@@ -969,7 +1106,7 @@ def sort_8laizi(hand_cards: list) -> tuple:
     return (best.bombs_output, best.others_output)
 
 
-def sort_8laizi_with_details(hand_cards: list) -> dict:
+def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None) -> dict:
     """
     八癞子一键理牌（含详情），供 Web UI 使用。
     
@@ -978,6 +1115,8 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
       best_index: 最优结果在 all_results 中的索引
       bombs, others: 最优结果的 bombs/others
       zones: 最优结果的三区划分
+    
+    laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
@@ -1004,77 +1143,47 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
             },
         })
 
-    # 方案O: 同花顺先于炸弹
-    for bomb_wilds in range(n_lz + 1):
-        for order in EXTRACTION_ORDERS:
-            key = ("O_flush_first", bomb_wilds, order)
-            if key in seen:
-                continue
-            seen.add(key)
-            result = execute_strategy(
-                natural_cards, wild_cards,
-                "O_flush_first", bomb_wilds, order
-            )
-            add_result(result, {
-                "strategy": "O_flush_first",
-                "bomb_wilds": bomb_wilds,
-                "order": list(order),
-            })
+    def _run_strategy_group(strategy, bomb_wilds_range, orders, label_fn):
+        for bomb_wilds in bomb_wilds_range:
+            remaining = n_lz - bomb_wilds
+            for order in orders:
+                # probe：先跑不限 budget 的版本，拿到各牌型实际癞子消耗
+                usage, probe_result = _probe_actual_wild_usage(
+                    natural_cards, wild_cards, strategy, bomb_wilds, order)
+                # probe 结果也加入候选
+                sig = probe_result.score()
+                if sig not in seen:
+                    seen.add(sig)
+                    add_result(probe_result, label_fn(bomb_wilds, order, usage))
+                # 只在实际消耗范围内枚举 budget
+                all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                for budgets in all_budgets:
+                    result = execute_strategy(
+                        natural_cards, wild_cards,
+                        strategy, bomb_wilds, order,
+                        wild_budgets=budgets
+                    )
+                    sig = result.score()
+                    if sig in seen:
+                        continue
+                    seen.add(sig)
+                    add_result(result, label_fn(bomb_wilds, order, budgets))
 
-    # 方案O_single: 同花先但最多只做1个同花顺（避免贪心消耗过多自然牌）
-    # 去重：bomb_wilds=0 时 O_flush_single 与 O_flush_first 等价
-    for bomb_wilds in range(n_lz + 1):
-        for order in EXTRACTION_ORDERS:
-            key = ("O_flush_single", bomb_wilds, order)
-            if key in seen:
-                continue
-            seen.add(key)
-            result = execute_strategy(
-                natural_cards, wild_cards,
-                "O_flush_single", bomb_wilds, order
-            )
-            add_result(result, {
-                "strategy": "O_flush_single",
-                "bomb_wilds": bomb_wilds,
-                "order": list(order),
-            })
+    bw_range = range(n_lz + 1)
 
-    # 方案N: 炸弹先于同花顺
-    for bomb_wilds in range(n_lz + 1):
-        for order in EXTRACTION_ORDERS:
-            key = ("N_bomb_first", bomb_wilds, order)
-            if key in seen:
-                continue
-            seen.add(key)
-            result = execute_strategy(
-                natural_cards, wild_cards,
-                "N_bomb_first", bomb_wilds, order
-            )
-            add_result(result, {
-                "strategy": "N_bomb_first",
-                "bomb_wilds": bomb_wilds,
-                "order": list(order),
-            })
+    _run_strategy_group("O_flush_first", bw_range, EXTRACTION_ORDERS,
+        lambda bw, o, b: {"strategy": "O_flush_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
-    # 方案O (去掉顺子)
+    _run_strategy_group("O_flush_single", bw_range, EXTRACTION_ORDERS,
+        lambda bw, o, b: {"strategy": "O_flush_single", "bomb_wilds": bw, "order": list(o), "budgets": b})
+
+    _run_strategy_group("N_bomb_first", bw_range, EXTRACTION_ORDERS,
+        lambda bw, o, b: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
-    for bomb_wilds in range(n_lz + 1):
-        for order in orders_no_straight:
-            key = ("O_flush_no_straight", bomb_wilds, order)
-            if key in seen:
-                continue
-            seen.add(key)
-            result = execute_strategy(
-                natural_cards, wild_cards,
-                "O_flush_first", bomb_wilds, order
-            )
-            add_result(result, {
-                "strategy": "O_flush_no_straight",
-                "bomb_wilds": bomb_wilds,
-                "order": list(order),
-            })
+    _run_strategy_group("O_flush_first", bw_range, orders_no_straight,
+        lambda bw, o, b: {"strategy": "O_flush_no_straight", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
-    # 找最优（按 score 排序）
     if not all_results:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
         return {
@@ -1085,16 +1194,13 @@ def sort_8laizi_with_details(hand_cards: list) -> dict:
             "zones": {"bombs": [], "notsort": _groups_to_dict(singles), "sortR": []},
         }
 
-    # 按 score 排序（score tuple 越小越好）
     indexed = list(enumerate(all_results))
     indexed.sort(key=lambda x: x[1]["score"])
     sorted_results = [r for _, r in indexed]
-    best_index_original = indexed[0][0]
 
-    # best_index 指向排序后列表中的第一个
     return {
         "all_results": sorted_results,
-        "best_index": 0,  # 排序后最优在索引0
+        "best_index": 0,
         "bombs": sorted_results[0]["bombs"],
         "others": sorted_results[0]["others"],
         "zones": sorted_results[0]["zones"],
