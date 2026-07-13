@@ -630,11 +630,13 @@ const LIMIT_TYPES = [
 const LIMIT_MAX = 8;
 let laiziLimitConfig = {};  // 当前生效的配置
 
+const LIMIT_DEFAULTS = { flush: 2, bomb: 3, straight: 1, board: 1, steel: 1, three_two: 0 };
+
 function loadLimitConfig() {
   try {
     const saved = localStorage.getItem('laiziLimitConfig');
-    laiziLimitConfig = saved ? JSON.parse(saved) : {};
-  } catch(e) { laiziLimitConfig = {}; }
+    laiziLimitConfig = saved ? JSON.parse(saved) : { ...LIMIT_DEFAULTS };
+  } catch(e) { laiziLimitConfig = { ...LIMIT_DEFAULTS }; }
 }
 
 function saveLimitConfig(cfg) {
@@ -736,12 +738,13 @@ function updateLimitTotal() {
 
 function resetLimitConfig() {
   LIMIT_TYPES.forEach(t => {
+    const dft = LIMIT_DEFAULTS[t.key] || 0;
     const slider = document.getElementById('limitSlider_' + t.key);
     const cb = document.getElementById('limitUnlimited_' + t.key);
     const val = document.getElementById('limitVal_' + t.key);
-    if (slider) { slider.value = 0; slider.disabled = false; }
+    if (slider) { slider.value = dft; slider.disabled = false; }
     if (cb) cb.checked = false;
-    if (val) { val.textContent = '0'; val.classList.remove('disabled'); }
+    if (val) { val.textContent = dft; val.classList.remove('disabled'); }
   });
   updateLimitTotal();
 }
