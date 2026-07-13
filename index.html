@@ -399,6 +399,43 @@ body::before {
 .config-modal .config-footer .summary .err { color:#e74c3c; }
 .config-modal .config-footer .summary .ok { color:#4caf50; }
 
+/* ── 癞子配置滑块 ── */
+.limit-row {
+  display:flex; align-items:center; gap:14px;
+  padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);
+}
+.limit-row .label {
+  width:100px; font-size:0.9rem; color:var(--gold-light); flex-shrink:0;
+}
+.limit-row input[type=range] {
+  flex:1; height:6px; -webkit-appearance:none; appearance:none;
+  background:rgba(255,255,255,0.1); border-radius:3px; outline:none;
+}
+.limit-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
+  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+}
+.limit-row input[type=range]::-moz-range-thumb {
+  width:18px; height:18px; border-radius:50%;
+  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+}
+.limit-row input[type=range]:disabled {
+  opacity:0.3; cursor:not-allowed;
+}
+.limit-row input[type=range]:disabled::-webkit-slider-thumb {
+  cursor:not-allowed;
+}
+.limit-row .val {
+  width:36px; text-align:center; font-size:1.1rem; font-weight:700;
+  color:var(--gold-light); flex-shrink:0;
+}
+.limit-row .val.disabled { opacity:0.3; }
+.limit-row .unlimited-check {
+  display:flex; align-items:center; gap:5px; width:90px; flex-shrink:0;
+  font-size:0.75rem; color:var(--text-dim); cursor:pointer; user-select:none;
+}
+.limit-row .unlimited-check input { cursor:pointer; }
+
 /* ── Responsive ── */
 @media (max-width:768px) {
   .container { padding:12px; }
@@ -425,6 +462,7 @@ body::before {
     <button class="btn primary" id="btnDeal" onclick="doDeal()">🂠 发牌</button>
     <button class="btn" id="btnConfig" onclick="openConfig()">🎴 配牌</button>
     <button class="btn" id="btnSort" onclick="doSort()" disabled>✦ 一键理牌</button>
+    <button class="btn" id="btnLimit" onclick="openLimitConfig()">⚙️ 配置项</button>
     <button class="btn danger" id="btnClear" onclick="doClear()">✕ 清空</button>
   </div>
 
@@ -545,12 +583,194 @@ body::before {
   </div>
 </div>
 
+<!-- ── 癞子配置弹窗 ── -->
+<div class="config-overlay" id="limitOverlay">
+  <div class="config-modal" style="max-width:480px">
+    <div class="config-header">
+      <h2>⚙️ 癞子预算配置</h2>
+      <span class="tip">分配 8 个癞子配额给各牌型</span>
+      <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeLimitConfig()">✕</button>
+    </div>
+    <div style="padding:24px 28px">
+      <div id="limitRows"></div>
+      <div style="margin-top:20px;padding:12px 16px;border-radius:8px;background:rgba(0,0,0,0.25);text-align:center">
+        <span style="font-size:0.85rem;color:var(--text-dim)">已分配：</span>
+        <span id="limitTotal" style="font-size:1.4rem;font-weight:700;color:var(--gold-light)">0</span>
+        <span style="font-size:0.85rem;color:var(--text-dim)">/ 8</span>
+        <span id="limitHint" style="margin-left:12px;font-size:0.8rem"></span>
+      </div>
+    </div>
+    <div class="config-footer">
+      <div class="summary" id="limitSummary"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" style="padding:8px 18px;font-size:0.85rem" onclick="resetLimitConfig()">↺ 重置默认</button>
+        <button class="btn primary" style="padding:8px 24px;font-size:0.85rem" onclick="submitLimitConfig()">✓ 确认</button>
+        <button class="btn danger" style="padding:8px 18px;font-size:0.85rem" onclick="closeLimitConfig()">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // ── State ──
 let currentHand = null;
 let sortResult = null;
+
+// ── 癞子预算配置 ──
+const LIMIT_TYPES = [
+  { key: 'flush',     name: '同花顺', icon: '🌸' },
+  { key: 'bomb',      name: '炸弹',   icon: '💣' },
+  { key: 'straight',  name: '顺子',   icon: '🔗' },
+  { key: 'board',     name: '木板',   icon: '🪵' },
+  { key: 'steel',     name: '钢板',   icon: '🔧' },
+  { key: 'three_two', name: '三带二', icon: '🎯' },
+];
+const LIMIT_MAX = 8;
+let laiziLimitConfig = {};  // 当前生效的配置
+
+function loadLimitConfig() {
+  try {
+    const saved = localStorage.getItem('laiziLimitConfig');
+    laiziLimitConfig = saved ? JSON.parse(saved) : {};
+  } catch(e) { laiziLimitConfig = {}; }
+}
+
+function saveLimitConfig(cfg) {
+  laiziLimitConfig = cfg;
+  localStorage.setItem('laiziLimitConfig', JSON.stringify(cfg));
+}
+
+function getActiveLimit() {
+  if (!laiziLimitConfig || Object.keys(laiziLimitConfig).length === 0) return null;
+  return { ...laiziLimitConfig };
+}
+
+function openLimitConfig() {
+  document.getElementById('limitOverlay').classList.add('active');
+  renderLimitRows();
+}
+
+function closeLimitConfig() {
+  document.getElementById('limitOverlay').classList.remove('active');
+}
+
+function renderLimitRows() {
+  const container = document.getElementById('limitRows');
+  container.innerHTML = '';
+  LIMIT_TYPES.forEach(t => {
+    const saved = laiziLimitConfig[t.key];
+    const isUnlimited = (saved === undefined || saved === 999);
+    const curVal = isUnlimited ? 0 : saved;
+    const row = document.createElement('div');
+    row.className = 'limit-row';
+    row.innerHTML = `
+      <span class="label">${t.icon} ${t.name}</span>
+      <input type="range" min="0" max="${LIMIT_MAX}" value="${curVal}"
+             id="limitSlider_${t.key}" oninput="updateLimitTotal()"
+             ${isUnlimited ? 'disabled' : ''}>
+      <span class="val ${isUnlimited ? 'disabled' : ''}" id="limitVal_${t.key}">${isUnlimited ? '∞' : curVal}</span>
+      <label class="unlimited-check">
+        <input type="checkbox" id="limitUnlimited_${t.key}"
+               ${isUnlimited ? 'checked' : ''}
+               onchange="onUnlimitedToggle('${t.key}')">
+        不限制
+      </label>`;
+    container.appendChild(row);
+  });
+  updateLimitTotal();
+}
+
+function onUnlimitedToggle(key) {
+  const cb = document.getElementById('limitUnlimited_' + key);
+  const slider = document.getElementById('limitSlider_' + key);
+  const val = document.getElementById('limitVal_' + key);
+  if (cb.checked) {
+    slider.disabled = true;
+    val.classList.add('disabled');
+    val.textContent = '∞';
+  } else {
+    slider.disabled = false;
+    val.classList.remove('disabled');
+    val.textContent = slider.value;
+  }
+  updateLimitTotal();
+}
+
+function updateLimitTotal() {
+  let total = 0;
+  let hasUnlimited = false;
+  LIMIT_TYPES.forEach(t => {
+    const cb = document.getElementById('limitUnlimited_' + t.key);
+    if (cb && cb.checked) {
+      hasUnlimited = true;
+    } else {
+      const v = parseInt(document.getElementById('limitSlider_' + t.key).value);
+      document.getElementById('limitVal_' + t.key).textContent = v;
+      total += v;
+    }
+  });
+
+  const totalEl = document.getElementById('limitTotal');
+  const hint = document.getElementById('limitHint');
+  const summary = document.getElementById('limitSummary');
+
+  if (hasUnlimited) {
+    // 有不限制项，校验区域置灰
+    totalEl.style.opacity = '0.3';
+    hint.innerHTML = '<span style="color:var(--text-dim)">有不限制项，跳过校验</span>';
+    summary.innerHTML = '<span style="color:var(--text-dim)">含不限制项</span>';
+  } else {
+    totalEl.style.opacity = '1';
+    totalEl.textContent = total;
+    if (total === LIMIT_MAX) {
+      hint.innerHTML = '<span style="color:#4caf50">✓ 合法</span>';
+      summary.innerHTML = '<span class="ok">✓ 配置合法</span>';
+    } else {
+      hint.innerHTML = `<span style="color:#e74c3c">需=8（差 ${LIMIT_MAX - total}）</span>`;
+      summary.innerHTML = `<span class="err">总和需=8，当前=${total}</span>`;
+    }
+  }
+}
+
+function resetLimitConfig() {
+  LIMIT_TYPES.forEach(t => {
+    const slider = document.getElementById('limitSlider_' + t.key);
+    const cb = document.getElementById('limitUnlimited_' + t.key);
+    const val = document.getElementById('limitVal_' + t.key);
+    if (slider) { slider.value = 0; slider.disabled = false; }
+    if (cb) cb.checked = false;
+    if (val) { val.textContent = '0'; val.classList.remove('disabled'); }
+  });
+  updateLimitTotal();
+}
+
+function submitLimitConfig() {
+  let hasUnlimited = false;
+  let total = 0;
+  const cfg = {};
+  LIMIT_TYPES.forEach(t => {
+    const cb = document.getElementById('limitUnlimited_' + t.key);
+    if (cb && cb.checked) {
+      cfg[t.key] = 999;
+      hasUnlimited = true;
+    } else {
+      const v = parseInt(document.getElementById('limitSlider_' + t.key).value);
+      cfg[t.key] = v;
+      total += v;
+    }
+  });
+  if (!hasUnlimited && total !== LIMIT_MAX) {
+    showToast(`分配总和需=8，当前=${total}`);
+    return;
+  }
+  saveLimitConfig(cfg);
+  closeLimitConfig();
+  showToast('癞子配置已保存');
+}
+
+loadLimitConfig();
 
 // ── Helpers ──
 const SUIT_SYMBOL = { S:'♠', H:'♥', C:'♣', D:'♦', X:'🃏' };
@@ -699,9 +919,10 @@ async function doSort() {
   document.getElementById('stratsContainer').style.display = 'none';
 
   try {
+    const limit = getActiveLimit();
     const resp = await fetch('api/sort', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ cards: currentHand })
+      body: JSON.stringify({ cards: currentHand, laizi_limit: limit })
     });
     sortResult = await resp.json();
 

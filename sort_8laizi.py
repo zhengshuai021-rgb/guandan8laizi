@@ -869,7 +869,7 @@ EXTRACTION_ORDERS = list(itertools.permutations(
 ))
 
 # 4 种牌型 key（用于预算分配）
-BUDGET_TYPES = ["straight", "board", "steel", "three_two"]
+BUDGET_TYPES = ["bomb", "flush", "straight", "board", "steel", "three_two"]
 
 
 # ================================================================
@@ -920,6 +920,8 @@ def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, or
                               wild_budgets=None)  # None = 不限制
 
     usage = {}
+    usage["bomb"] = sum(g.wild_count for g in result.bombs)
+    usage["flush"] = sum(g.wild_count for g in result.flushes)
     usage["straight"] = sum(g.wild_count for g in result.straights)
     usage["board"] = sum(g.wild_count for g in result.boards)
     usage["steel"] = sum(g.wild_count for g in result.steels)
@@ -978,10 +980,10 @@ def execute_strategy(natural_cards: list, wild_cards: list,
       "O_flush_single" - 同花顺先于炸弹，但最多1个同花顺
       "N_bomb_first"   - 炸弹先于同花顺
     
-    bomb_wilds: 给炸弹预留的癞子数量上限
+    bomb_wilds: 给炸弹预留的癞子数量上限（可被 wild_budgets["bomb"] 进一步限制）
     
-    wild_budgets: 顺子/木板/钢板/三带二 的癞子预算上限，格式：
-      {"straight": N, "board": N, "steel": N, "three_two": N}
+    wild_budgets: 各牌型的癞子预算上限，格式：
+      {"straight": N, "board": N, "steel": N, "three_two": N, "bomb": N, "flush": N}
       None 或缺省项 = 不限制（999）
     """
     _reset_used(natural_cards)
@@ -997,6 +999,10 @@ def execute_strategy(natural_cards: list, wild_cards: list,
             return wild_budgets.get(key, 999)
         return 999
 
+    # bomb 和 flush 的实际限额 = min(bomb_wilds/bomb 参数, wild_budgets 配置)
+    bomb_cap = min(bomb_wilds, _budget("bomb"))
+    flush_cap = _budget("flush")
+
     result = SortResult()
     result.kings = extract_king_bombs(pool)
 
@@ -1008,13 +1014,15 @@ def execute_strategy(natural_cards: list, wild_cards: list,
                 suit_counts[c.suit] += 1
         flush_suit_order = sorted(SUITS, key=lambda s: suit_counts.get(s, 0))
         result.flushes = extract_flush_straights(pool, wp,
-                                                 max_wilds_for_flush=max(0, len(wp) - bomb_wilds),
+                                                 max_wilds_for_flush=min(
+                                                     max(0, len(wp) - bomb_cap), flush_cap),
                                                  suit_priority=flush_suit_order,
                                                  max_flushes=max_f)
-        result.bombs = extract_bombs(pool, wp, bomb_wilds)
+        result.bombs = extract_bombs(pool, wp, bomb_cap)
     elif strategy == "N_bomb_first":
-        result.bombs = extract_bombs(pool, wp, bomb_wilds)
-        result.flushes = extract_flush_straights(pool, wp)
+        result.bombs = extract_bombs(pool, wp, bomb_cap)
+        result.flushes = extract_flush_straights(pool, wp,
+                                                 max_wilds_for_flush=flush_cap)
 
     for ext_type in extraction_order:
         if ext_type == "straight":

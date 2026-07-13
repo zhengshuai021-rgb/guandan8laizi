@@ -104,7 +104,8 @@ def api_sort():
         is_wild=c.get("is_wild", False), cid=c.get("cid", 0),
     ) for c in data.get("cards", [])]
 
-    result = sort_8laizi_with_details(hand_cards)
+    laizi_limit = data.get("laizi_limit")
+    result = sort_8laizi_with_details(hand_cards, laizi_limit=laizi_limit)
     result["best_index"] = 0
     # 为每个 zone 的 cards 添加 hex 编码（直接从 dict 计算，避免重复创建 Card）
     for zone_name, groups in result.get("zones", {}).items():
