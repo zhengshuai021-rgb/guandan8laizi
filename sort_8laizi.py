@@ -1071,16 +1071,10 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
         for bomb_wilds in range(n_lz + 1):
             remaining = n_lz - bomb_wilds
             for order in orders:
-                # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗
-                usage, probe_result = _probe_actual_wild_usage(
+                # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗上限
+                usage, _ = _probe_actual_wild_usage(
                     natural_cards, wild_cards, strategy, bomb_wilds, order)
-                # probe 结果本身也是一个候选
-                sig = probe_result.score()
-                if sig not in seen_results:
-                    seen_results.add(sig)
-                    if best is None or probe_result.score() < best.score():
-                        best = probe_result
-                # 只在实际消耗范围内枚举 budget
+                # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
                 all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                 for budgets in all_budgets:
                     try_one(strategy, bomb_wilds, order, budgets)
@@ -1155,15 +1149,10 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None) -> dict
         for bomb_wilds in bomb_wilds_range:
             remaining = n_lz - bomb_wilds
             for order in orders:
-                # probe：先跑不限 budget 的版本，拿到各牌型实际癞子消耗
-                usage, probe_result = _probe_actual_wild_usage(
+                # probe：先跑不限 budget 的版本，拿到各牌型实际癞子消耗上限
+                usage, _ = _probe_actual_wild_usage(
                     natural_cards, wild_cards, strategy, bomb_wilds, order)
-                # probe 结果也加入候选
-                sig = probe_result.score()
-                if sig not in seen:
-                    seen.add(sig)
-                    add_result(probe_result, label_fn(bomb_wilds, order, usage))
-                # 只在实际消耗范围内枚举 budget
+                # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
                 all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                 for budgets in all_budgets:
                     result = execute_strategy(
