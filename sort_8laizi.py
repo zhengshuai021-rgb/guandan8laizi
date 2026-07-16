@@ -1034,9 +1034,39 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         elif ext_type == "three_two":
             result.three_with_twos = extract_three_with_two(pool, wp, max_wilds=_budget("three_two"))
 
+    # 剩余癞子优先喂给已有炸弹（扩线），避免流入单张/对子
+    _boost_bombs_with_leftover_wilds(wp, result.bombs)
+
     result.triples, result.pairs, result.singles = extract_remaining(pool, wp)
 
     return result
+
+
+def _boost_bombs_with_leftover_wilds(wild_pool: list, bombs: list):
+    """
+    将未使用的癞子优先分配给已有炸弹扩线。
+    规则：每轮优先选张数最少的炸弹，张数相同选牌值最大的。
+    """
+    available = _active_wilds(wild_pool)
+    if not available or not bombs:
+        return
+
+    for w in available:
+        # 选出最佳炸弹：
+        #   优先张数最少（让中小炸弹变大），张数相同时牌值最大（高位优势）
+        best = None
+        for b in bombs:
+            if best is None or b.size < best.size or (
+                b.size == best.size and b.first_natural_power() > best.first_natural_power()
+            ):
+                best = b
+        if best is not None:
+            w.used = True
+            best.cards.insert(0, w)  # 癞子插到最前（代表它替代了缺失的同点牌）
+            best.size += 1
+            # 更新炸弹 power：新线数 = size，新底牌不变（癞子不改变底牌值）
+            fnp = best.first_natural_power()
+            best.power = fnp + best.size * 100
 
 
 # ================================================================
