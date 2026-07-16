@@ -12,7 +12,7 @@
 配置示例：
     [BaHongTaoDealCard]
     WildTiers=0-2:69|3-4:20|5-7:10|8:1
-    RobotMaxWilds=1
+    RobotMaxWilds=2
     ControlMode=1
     CompensateThreshold=30
     ScoreBomb=30
@@ -37,7 +37,7 @@ from typing import List, Tuple, Optional
 
 DEFAULT_INI_TEXT = """[BaHongTaoDealCard]
 WildTiers=0-2:69|3-4:20|5-7:10|8:1
-RobotMaxWilds=1
+RobotMaxWilds=2
 ControlMode=1
 CompensateThreshold=30
 ScoreBomb=30

@@ -1611,10 +1611,12 @@ def _assign_wilds_phase1(config: DealConfig, rng: random.Random) -> list:
 
     流程:
       1. 每人独立摇号 → 4 个癞子数
-      2. 机器人座位（1..n-1）钳制到 RobotMaxWilds
-      3. 总和 > 8：从最多者逐张扣减
-      4. 总和 < 8：给最少者逐张补足
-      5. 打乱机器人座位之间的癞子数对应（P1 固定为人类）
+      2. 机器人座位钳制到 RobotMaxWilds
+      3. 加权修正到总和=8:
+         - 差额 > 0：按"剩余容量权重"随机挑选补足
+         - 差额 < 0：按"超出量权重"随机挑选扣减
+         - 机器人上限为 RobotMaxWilds（修正阶段也遵守）
+      4. 打乱机器人座位之间的癞子数对应（P1 固定为人类）
 
     返回：[wild_count_seat0, wild_count_seat1, wild_count_seat2, wild_count_seat3]
     """
@@ -1626,39 +1628,78 @@ def _assign_wilds_phase1(config: DealConfig, rng: random.Random) -> list:
     counts = []
     for i in range(n_players):
         c = _roll_wild_count_for_one(config.wild_tiers, rng)
-        c = max(0, min(c, total_wilds))  # 钳制到 [0, 8]
+        c = max(0, min(c, total_wilds))
         counts.append(c)
 
-    # Step 2: 机器人座位（1..n-1）限制最多 RobotMaxWilds
+    # Step 2: 机器人座位钳制
     for i in range(1, n_players):
         if counts[i] > robot_max:
             counts[i] = robot_max
 
-    # Step 3: 总和 > 8 → 优先从机器人扣，机器扣到 0 后再从人类扣
-    while sum(counts) > total_wilds:
-        # 先找机器人中癞子最多的
-        robot_indices = list(range(1, n_players))
-        max_robot = max(robot_indices, key=lambda i: counts[i]) if robot_indices else -1
-        if max_robot >= 0 and counts[max_robot] > 0:
-            counts[max_robot] -= 1
-        else:
-            # 机器人全部为 0，从人类扣
-            if counts[0] > 0:
-                counts[0] -= 1
-            else:
-                break
+    # Step 3: 加权修正到总和=8
+    _balance_to_total(counts, total_wilds, robot_max, rng)
 
-    # Step 4: 总和 < 8 → 只给人类玩家补足（机器人已达上限，不再追加）
-    while sum(counts) < total_wilds:
-        counts[0] += 1
-
-    # Step 5: 打乱机器人座位（1..n-1）之间的癞子数对应
-    # P1 (seat 0) 固定为人类，机器人之间随机交换癞子数
+    # Step 4: 打乱机器人座位
     robot_counts = counts[1:]
     rng.shuffle(robot_counts)
     counts[1:] = robot_counts
 
     return counts
+
+
+def _balance_to_total(counts: list, target: int, robot_max: int, rng: random.Random):
+    """
+    加权修正 counts 使其总和 = target。
+    补足时按每人的"可加容量"作为权重随机分配，
+    扣减时按每人的"可减量"作为权重随机分配。
+    机器人上限为 robot_max，下限为 0。
+    """
+    n = len(counts)
+    max_rounds = target * 4  # 安全上限
+
+    for _ in range(max_rounds):
+        diff = target - sum(counts)
+        if diff == 0:
+            return
+
+        if diff > 0:
+            # 需要加癞子：按每人剩余容量权重随机选
+            capacities = []
+            for i in range(n):
+                cap = robot_max if i > 0 else target
+                room = max(0, cap - counts[i])
+                capacities.append(room)
+            if sum(capacities) == 0:
+                # 全部到上限，强制给人加
+                for i in range(n):
+                    capacities[i] = 1
+            # 加权随机选一个座位 +1
+            idx = _weighted_choice(capacities, rng)
+            if idx >= 0:
+                counts[idx] += 1
+
+        else:  # diff < 0
+            # 需要扣癞子：按每人可减量权重随机选
+            reducible = [max(0, counts[i]) for i in range(n)]
+            if sum(reducible) == 0:
+                return
+            idx = _weighted_choice(reducible, rng)
+            if idx >= 0:
+                counts[idx] -= 1
+
+
+def _weighted_choice(weights: list, rng: random.Random) -> int:
+    """按权重列表随机选一个索引，返回 -1 如果全为 0。"""
+    total = sum(weights)
+    if total <= 0:
+        return -1
+    r = rng.uniform(0, total)
+    cumulative = 0.0
+    for i, w in enumerate(weights):
+        cumulative += w
+        if r <= cumulative:
+            return i
+    return len(weights) - 1
 
 
 # ----------------------------------------------------------------
