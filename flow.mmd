@@ -1,11 +1,28 @@
-flowchart TD
-  A[手牌+癞子] --> B[Web UI 配置]
-  B --> C["预算上限(6种牌型)"]
-  C --> D[遍历 策略×炸弹×排序]
-  D --> E["探路: 不限预算跑一次<br/>→ 各牌型实际上限"]
-  E --> F["枚举预算分配<br/>剩余癞子 + 上限约束"]
-  F --> G["执行策略<br/>炸弹/同花顺 分配癞子"]
-  G --> H[加权评分]
-  H --> I{还有?}
-  I -->|是| D
-  I -->|否| J[选最优 → 出牌]
+flowchart TB
+    Start(["输入：27张手牌"]) --> Split["分离癞子牌与自然牌"]
+    Split --> Begin
+
+    subgraph Main["策略枚举"]
+        Begin["选定策略组<br/>同花顺优先 / 单同花 / 炸弹优先 / 去顺子"]
+        Begin --> BombQ["设定炸弹癞子配额<br/>0 ~ 癞子总数"]
+        BombQ --> Order["选择提取排列<br/>顺子/木板/钢板/三带二的24种排列"]
+        Order --> Probe["探测：不限预算跑一次<br/>记录6种牌型实际癞子消耗量"]
+        Probe --> GenBud["生成预算组合<br/>每种牌型上限 = min(探测值, 用户配置, 剩余癞子)"]
+        GenBud --> Budget["遍历每种预算组合"]
+        Budget --> Extract["执行牌型提取"]
+    end
+
+    subgraph ExtractDetail["牌型提取细节"]
+        E1["① 王炸提取"] --> E2["② 同花顺 / 炸弹<br/>按策略组先后顺序"]
+        E2 --> E3["③ 顺子 / 木板 / 钢板 / 三带二<br/>按排列顺序 + 预算上限"]
+        E3 --> E4["④ 剩余癞子喂炸弹扩线<br/>优先张数少 → 牌值大"]
+        E4 --> E5["⑤ 残余收尾<br/>三张 → 对子 → 单张"]
+    end
+
+    Extract --> ExtractDetail
+    ExtractDetail --> Score["计算加权评分 + 结果去重"]
+    Score --> More{还有策略?}
+    More -->|是| Begin
+    More -->|否| Rank["按评分排序，取最优方案"]
+    Rank --> Partition["三区划分：炸弹区 / 非理牌区 / 理牌右区"]
+    Partition --> Output(["输出最优理牌结果"])
