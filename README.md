@@ -30,10 +30,12 @@ python sort_8laizi.py
 
 ```
 guandan8laizi/
-├── sort_8laizi.py   # 核心理牌算法（所有逻辑）
-├── web_server.py    # Flask Web 服务器（纯壳，路由委托）
-├── index.html       # 前端页面（深绿牌桌风格）
-└── README.md        # 本文档
+├── sort_8laizi.py      # 核心理牌算法 + 八红桃发牌系统
+├── deal_config.py      # 发牌配置解析器（INI → DealConfig）
+├── deal_config.ini     # 发牌配置示例文件
+├── web_server.py       # Flask Web 服务器（纯壳，路由委托）
+├── index.html          # 前端页面（深绿牌桌风格）
+└── README.md           # 本文档
 ```
 
 ---
@@ -333,6 +335,9 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 | `/api/deck` | GET | 返回完整 108 张牌库（供配牌弹窗使用） |
 | `/api/deal_custom` | POST | 自定义配牌：输入 4 个玩家的 cid 列表 |
 | `/api/sort` | POST | 理牌：输入卡片列表，返回全量策略详情 + 三区划分 |
+| `/api/deal_ba` | POST | **八红桃发牌**：两阶段（癞子概率分配 + 自然牌补偿），返回 4 人 × 27 张 |
+| `/api/deal_ba_config` | GET | 返回当前默认发牌配置（JSON） |
+| `/api/evaluate_power` | POST | 评估单副手牌牌力（癞子跨牌型复用计分） |
 
 ### 十六进制编码
 
@@ -350,7 +355,128 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 
 ---
 
-## 10. 公共接口（sort_8laizi 导出）
+## 10. 八红桃发牌系统（BaHongTao Deal）
+
+基于概率档位 + 牌力补偿的两阶段发牌，实现"发牌即平衡"的体验。
+
+### 10.1 发牌流程
+
+```
+┌─ Phase 1: 癞子分配 ─────────────────────────────────────┐
+│  1. 每人独立摇号（按 WildTiers 概率档位）                   │
+│  2. 机器人座位 (P2-P4) 钳制到 RobotMaxWilds                │
+│  3. 总和 > 8 → 从最多者逐张扣减                            │
+│  4. 总和 < 8 → 给最少者逐张补足                            │
+│  5. 机器人座位之间随机打乱                                  │
+│  → 4 人癞子数，总和 = 8                                    │
+└──────────────────────────────────────────────────────────┘
+                         │
+┌─ Phase 2: 自然牌发放 ───────────────────────────────────┐
+│  1. 100 张自然牌洗乱                                       │
+│  2. 按癞子数分配：每人自然牌 = 27 - wild_count              │
+│  3. 若 ControlMode=1 且牌力差距 > CompensateThreshold%:    │
+│     → 最强手与最弱手交换 2~4 张牌（保持每人 27 张）          │
+│     → 可多轮直到差距收敛                                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 10.2 牌力评估规则
+
+**核心：同一张癞子可重复计入多种牌型。** 每种牌型独立评估，癞子不"消耗"。
+
+| 牌型 | 权重字段 | 默认值 | 说明 |
+|------|---------|--------|------|
+| 炸弹 | `ScoreBomb` | 30 | 每个 rank 自然牌 +癞子 ≥ 4 |
+| 同花顺 | `ScoreSameColorLink` | 25 | 每花色每 5 连窗口（癞子补断口） |
+| 钢板 | `ScoreSteelPlate` | 15 | 2 连续 rank 各 ≥ 3 张 |
+| 连对 | `ScoreLinkPair` | 10 | 3 连续 rank 各 ≥ 2 张 |
+| 大王 | `ScoreBigJoker` | 10 | 有大王 = 1 |
+| 三张 | `ScoreThree` | 6 | 每个 rank ≥ 3 张 |
+| 小王 | `ScoreSmallJoker` | 6 | 有小王 = 1 |
+| 癞子 | `ScoreWild` | 5 | 每张癞子计分 |
+
+### 10.3 配置文件
+
+`deal_config.ini`（INI 格式，支持行内注释）：
+
+```ini
+[BaHongTaoDealCard]
+WildTiers=0-2:69|3-4:20|5-7:10|8:1
+RobotMaxWilds=1
+ControlMode=1
+CompensateThreshold=30
+ScoreBomb=30
+ScoreSameColorLink=25
+ScoreSteelPlate=15
+ScoreLinkPair=10
+ScoreBigJoker=10
+ScoreThree=6
+ScoreSmallJoker=6
+ScoreWild=5
+```
+
+### 10.4 代码调用
+
+```python
+from sort_8laizi import deal_ba_hong_tao, evaluate_hand_power
+from deal_config import default_config, load_config_from_file
+
+# 默认配置
+cfg = default_config()
+result = deal_ba_hong_tao(cfg, seed=42)
+
+# 从 INI 文件加载
+cfg = load_config_from_file("deal_config.ini")
+result = deal_ba_hong_tao(cfg, seed=100)
+
+# 结果
+result.players          # [[Card,...], ...]  4 人 × 27 张
+result.wild_counts      # [int, ...]  每人癞子数
+result.power_evals      # [{score, details, weights}, ...]
+result.compensation_log # [{round, from_seat, to_seat, ...}, ...]
+
+# 单独评估牌力
+ev = evaluate_hand_power(hand_cards, cfg.scores)
+print(ev["score"], ev["details"])
+```
+
+### 10.5 Web API
+
+```bash
+# 发牌
+curl -X POST http://127.0.0.1:5001/api/deal_ba \
+  -H "Content-Type: application/json" \
+  -d '{"seed": 42, "level": "2"}'
+
+# 自定义配置发牌
+curl -X POST http://127.0.0.1:5001/api/deal_ba \
+  -H "Content-Type: application/json" \
+  -d '{"seed": 100, "config": {"robot_max_wilds": 2, "control_mode": 0}}'
+
+# 从 INI 文件加载配置
+curl -X POST http://127.0.0.1:5001/api/deal_ba \
+  -H "Content-Type: application/json" \
+  -d '{"seed": 42, "config_file": "deal_config.ini"}'
+
+# 查看默认配置
+curl http://127.0.0.1:5001/api/deal_ba_config
+
+# 评估牌力
+curl -X POST http://127.0.0.1:5001/api/evaluate_power \
+  -H "Content-Type: application/json" \
+  -d '{"cards": [{"suit":"S","rank":"A","is_wild":false,"cid":0}, ...]}'
+```
+
+### 10.6 座位约定
+
+| 座位 | 角色 | 癞子限制 |
+|------|------|---------|
+| P1 (seat 0) | 人类 | 无限制（按概率档位） |
+| P2-P4 (seat 1-3) | 机器人 | RobotMaxWilds（受总和=8约束） |
+
+---
+
+## 11. 公共接口（sort_8laizi 导出）
 
 ```python
 sort_8laizi(hand_cards, laizi_limit=None)          # → (bombs, others)
@@ -363,4 +489,20 @@ validate_deal(player_cards)      # → dict 校验自定义配牌合法性
 cards_to_json(cards)             # → [{suit,rank,is_wild,cid}, ...]
 card_to_hex(c)                   # → str 单张十六进制编码
 cards_to_hex(cards)              # → str 逗号分隔编码
+
+# 八红桃发牌系统
+deal_ba_hong_tao(config, seed, level)  # → DealResult  4人×27张
+evaluate_hand_power(cards, scores)      # → {score, details, weights}
+```
+
+### deal_config 导出
+
+```python
+from deal_config import (
+    DealConfig, ScoreWeights, WildTier,   # 数据类
+    default_config,                        # → DealConfig 默认配置
+    load_config_from_file,                 # → DealConfig 从 INI 文件
+    load_config_from_ini_text,             # → DealConfig 从 INI 字符串
+    parse_wild_tiers,                      # → [WildTier] 解析 "0-2:69|..."
+)
 ```
