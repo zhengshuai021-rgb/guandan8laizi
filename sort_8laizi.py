@@ -1634,17 +1634,23 @@ def _assign_wilds_phase1(config: DealConfig, rng: random.Random) -> list:
         if counts[i] > robot_max:
             counts[i] = robot_max
 
-    # Step 3: 总和 > 8 → 从最多者逐张扣减
+    # Step 3: 总和 > 8 → 优先从机器人扣，机器扣到 0 后再从人类扣
     while sum(counts) > total_wilds:
-        max_idx = max(range(n_players), key=lambda i: counts[i])
-        if counts[max_idx] <= 0:
-            break
-        counts[max_idx] -= 1
+        # 先找机器人中癞子最多的
+        robot_indices = list(range(1, n_players))
+        max_robot = max(robot_indices, key=lambda i: counts[i]) if robot_indices else -1
+        if max_robot >= 0 and counts[max_robot] > 0:
+            counts[max_robot] -= 1
+        else:
+            # 机器人全部为 0，从人类扣
+            if counts[0] > 0:
+                counts[0] -= 1
+            else:
+                break
 
-    # Step 4: 总和 < 8 → 给最少者逐张补足
+    # Step 4: 总和 < 8 → 只给人类玩家补足（机器人已达上限，不再追加）
     while sum(counts) < total_wilds:
-        min_idx = min(range(n_players), key=lambda i: counts[i])
-        counts[min_idx] += 1
+        counts[0] += 1
 
     # Step 5: 打乱机器人座位（1..n-1）之间的癞子数对应
     # P1 (seat 0) 固定为人类，机器人之间随机交换癞子数
@@ -1734,19 +1740,26 @@ def _compensate(players_hands: list, wild_counts: list,
         if strongest == weakest:
             break
 
-        # 随机交换 2~4 张牌
+        # 随机交换 2~4 张牌（仅交换非癞子牌，癞子是战略性资源不参与交换）
         n_swap = rng.randint(2, 4)
-        n_swap = min(n_swap, len(players_hands[strongest]), len(players_hands[weakest]))
 
-        # 从最强手随机选 n_swap 张
-        strong_indices = list(range(len(players_hands[strongest])))
-        rng.shuffle(strong_indices)
-        strong_picks = sorted(strong_indices[:n_swap], reverse=True)
+        # 从最强手选 n_swap 张非癞子牌
+        strong_nat_indices = [i for i, c in enumerate(players_hands[strongest]) if not c.is_wild]
+        rng.shuffle(strong_nat_indices)
+        strong_picks = sorted(strong_nat_indices[:n_swap], reverse=True)
 
-        # 从最弱手随机选 n_swap 张
-        weak_indices = list(range(len(players_hands[weakest])))
-        rng.shuffle(weak_indices)
-        weak_picks = sorted(weak_indices[:n_swap], reverse=True)
+        # 从最弱手选 n_swap 张非癞子牌
+        weak_nat_indices = [i for i, c in enumerate(players_hands[weakest]) if not c.is_wild]
+        rng.shuffle(weak_nat_indices)
+        weak_picks = sorted(weak_nat_indices[:n_swap], reverse=True)
+
+        # 两侧可用牌数可能不足，取实际能交换的数量
+        actual_swap = min(len(strong_picks), len(weak_picks))
+        if actual_swap < 2:
+            break  # 无法交换足够牌
+        strong_picks = strong_picks[:actual_swap]
+        weak_picks = weak_picks[:actual_swap]
+        n_swap = actual_swap
 
         # 提取被交换的牌
         strong_cards = [players_hands[strongest][i] for i in strong_picks]
@@ -1858,8 +1871,11 @@ def deal_ba_hong_tao(config: DealConfig = None, seed: int = None,
         ev = evaluate_hand_power(hand, config.scores)
         power_evals.append(ev)
 
+    # 补偿可能交换了牌（含癞子），wild_counts 以实际手牌为准
+    actual_wild_counts = [sum(1 for c in h if c.is_wild) for h in players_hands]
+
     result.players = players_hands
-    result.wild_counts = wild_counts
+    result.wild_counts = actual_wild_counts
     result.power_evals = power_evals
     result.compensation_log = comp_log
 

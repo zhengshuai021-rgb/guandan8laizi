@@ -436,6 +436,147 @@ body::before {
 }
 .limit-row .unlimited-check input { cursor:pointer; }
 
+/* ── 八红桃发牌 UI ── */
+.ba-section-label {
+  font-size:0.95rem; color:var(--gold-light); margin:18px 0 8px;
+  font-weight:500; letter-spacing:0.03em;
+}
+.ba-section-label:first-child { margin-top:0; }
+
+/* 概率档位表格 */
+.ba-tier-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+.ba-tier-table th {
+  padding:6px 8px; text-align:center; font-weight:500;
+  color:var(--gold); font-size:0.75rem; letter-spacing:0.05em;
+  background:rgba(0,0,0,0.25); border-bottom:1px solid var(--panel-border);
+}
+.ba-tier-table td { padding:4px 8px; text-align:center; }
+.ba-tier-table input[type=number] {
+  width:50px; background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.25);
+  color:var(--gold-light); border-radius:4px; padding:3px 6px; font-size:0.82rem;
+  text-align:center;
+}
+.ba-tier-table input[type=number]:focus { outline:none; border-color:var(--gold); }
+.ba-tier-table .tier-label { color:var(--text-dim); font-size:0.78rem; }
+.ba-tier-table .del-btn {
+  background:none; border:none; color:#e74c3c; cursor:pointer; font-size:1rem; padding:0 4px;
+}
+.ba-tier-total {
+  margin-top:6px; font-size:0.82rem; color:var(--text-dim); text-align:right;
+}
+.ba-tier-total #baTierTotal { font-weight:700; color:var(--gold-light); font-size:1rem; }
+.ba-tier-total .ok { color:#4caf50; }
+.ba-tier-total .err { color:#e74c3c; }
+.ba-add-tier {
+  margin-top:4px; text-align:center;
+}
+.ba-add-tier button {
+  background:rgba(212,168,67,0.1); border:1px dashed rgba(212,168,67,0.3);
+  color:var(--gold-light); border-radius:4px; padding:4px 16px;
+  font-size:0.78rem; cursor:pointer; transition:all 0.2s;
+}
+.ba-add-tier button:hover { background:rgba(212,168,67,0.2); }
+
+/* 表单行 */
+.ba-form-row {
+  display:flex; align-items:center; gap:12px; margin-bottom:8px;
+}
+.ba-form-row label {
+  width:130px; font-size:0.85rem; color:var(--text-dim); flex-shrink:0;
+}
+.ba-form-row select {
+  background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.25);
+  color:var(--gold-light); border-radius:4px; padding:4px 10px; font-size:0.82rem;
+}
+.ba-input-num {
+  width:60px; background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.25);
+  color:var(--gold-light); border-radius:4px; padding:4px 8px; font-size:0.85rem;
+  text-align:center;
+}
+.ba-input-num:focus { outline:none; border-color:var(--gold); }
+.ba-input-seed {
+  flex:1; background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.25);
+  color:var(--gold-light); border-radius:4px; padding:4px 10px; font-size:0.85rem;
+}
+.ba-input-seed:focus { outline:none; border-color:var(--gold); }
+.ba-input-seed::placeholder { color:var(--text-dim); opacity:0.6; }
+
+/* 补偿滑块 */
+.ba-slider {
+  flex:1; max-width:200px; height:6px; -webkit-appearance:none; appearance:none;
+  background:rgba(255,255,255,0.1); border-radius:3px; outline:none;
+}
+.ba-slider::-webkit-slider-thumb {
+  -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
+  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+}
+.ba-slider::-moz-range-thumb {
+  width:16px; height:16px; border-radius:50%;
+  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+}
+.ba-slider-val {
+  width:40px; text-align:center; font-size:0.9rem; font-weight:600;
+  color:var(--gold-light); flex-shrink:0;
+}
+
+/* 评分权重网格 */
+.ba-score-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:6px 20px;
+}
+.ba-score-item {
+  display:flex; align-items:center; gap:8px; padding:4px 0;
+}
+.ba-score-item label {
+  flex:1; font-size:0.8rem; color:var(--text-dim);
+}
+.ba-score-item input {
+  width:50px; background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.25);
+  color:var(--gold-light); border-radius:4px; padding:3px 6px; font-size:0.82rem;
+  text-align:center;
+}
+.ba-score-item input:focus { outline:none; border-color:var(--gold); }
+
+/* 4人手牌 Tab */
+.ba-tabs {
+  display:flex; gap:4px; margin-bottom:12px;
+}
+.ba-tab {
+  flex:1; padding:10px 8px; border-radius:6px; cursor:pointer;
+  background:rgba(0,0,0,0.3); border:1px solid rgba(212,168,67,0.15);
+  text-align:center; transition:all 0.2s; font-size:0.85rem;
+  color:var(--text-dim);
+}
+.ba-tab:hover { background:rgba(212,168,67,0.1); color:var(--gold-light); }
+.ba-tab.active {
+  background:rgba(212,168,67,0.2); border-color:var(--gold);
+  color:var(--gold-light); font-weight:600;
+}
+.ba-tab .tab-role { font-size:0.7rem; opacity:0.7; display:block; }
+.ba-tab .tab-score { font-size:0.75rem; font-weight:700; }
+.ba-tab .tab-wilds { font-size:0.7rem; }
+
+/* 牌力信息条 */
+.ba-player-info {
+  display:flex; gap:16px; flex-wrap:wrap; margin-bottom:8px;
+  padding:8px 14px; background:var(--panel); border-radius:6px;
+  border:1px solid var(--panel-border); font-size:0.8rem; color:var(--text-dim);
+}
+.ba-player-info .power-val { color:var(--gold-light); font-weight:700; font-size:1.1rem; }
+.ba-player-info .detail-chip {
+  display:inline-block; padding:2px 8px; border-radius:3px; margin:2px;
+  background:rgba(255,255,255,0.06); font-size:0.72rem;
+}
+.ba-player-info .detail-chip .chip-val { color:var(--gold-light); font-weight:600; }
+
+/* 补偿日志 */
+.ba-comp-log {
+  margin-top:12px; padding:10px 14px; background:var(--panel);
+  border-radius:6px; border:1px solid var(--panel-border); font-size:0.78rem;
+  color:var(--text-dim);
+}
+.ba-comp-log .log-title { color:var(--gold-light); font-weight:600; margin-bottom:4px; }
+.ba-comp-log .log-entry { padding:2px 0; }
+
 /* ── Responsive ── */
 @media (max-width:768px) {
   .container { padding:12px; }
@@ -459,7 +600,8 @@ body::before {
 
   <!-- Controls -->
   <div class="controls">
-    <button class="btn primary" id="btnDeal" onclick="doDeal()">🂠 发牌</button>
+    <button class="btn primary" id="btnDeal" onclick="doBaDeal()">🂠 发牌</button>
+    <button class="btn" id="btnDealBa" onclick="openDealBaConfig()">⚙️ 发牌配置</button>
     <button class="btn" id="btnConfig" onclick="openConfig()">🎴 配牌</button>
     <button class="btn" id="btnSort" onclick="doSort()" disabled>✦ 一键理牌</button>
     <button class="btn" id="btnLimit" onclick="openLimitConfig()">⚙️ 配置项</button>
@@ -480,15 +622,23 @@ body::before {
     <div style="color:var(--text-dim)">计算最优理牌方案...</div>
   </div>
 
-  <!-- Hand display -->
-  <div class="section-title">📋 当前手牌</div>
-  <div class="card-row" id="handDisplay">
-    <span style="color:var(--text-dim);font-size:0.9rem">点击「发牌」开始</span>
-  </div>
-  <div class="hex-box" id="handHexBox" style="display:none">
-    <span class="hex-label">🔢 编码</span>
-    <span class="hex-text" id="handHexText"></span>
-    <button class="hex-copy" onclick="copyHex('handHexText', this)">复制</button>
+  <!-- 八红桃发牌：4人手牌展示 -->
+  <div id="baContainer">
+    <div class="section-title">🎲 发牌结果</div>
+    <div class="ba-tabs" id="baTabs">
+      <span style="color:var(--text-dim);font-size:0.9rem;padding:20px 0;display:block;text-align:center">点击「🂠 发牌」开始</span>
+    </div>
+    <div class="ba-player-info" id="baPlayerInfo" style="display:none"></div>
+    <div class="card-row" id="baHandDisplay" style="min-height:120px;display:none"></div>
+    <div class="hex-box" id="baHexBox" style="display:none">
+      <span class="hex-label">🔢 编码</span>
+      <span class="hex-text" id="baHexText"></span>
+      <button class="hex-copy" onclick="copyHex('baHexText', this)">复制</button>
+    </div>
+    <div class="ba-comp-log" id="baCompLog" style="display:none"></div>
+    <div id="baSortBtnRow" style="display:none;text-align:center;margin-top:12px">
+      <button class="btn primary" onclick="baSortCurrent()">✦ 理牌当前玩家</button>
+    </div>
   </div>
 
   <!-- Sorted zones -->
@@ -612,6 +762,68 @@ body::before {
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ── 八红桃发牌配置弹窗 ── -->
+<div class="config-overlay" id="dealBaOverlay">
+  <div class="config-modal" style="max-width:640px">
+    <div class="config-header">
+      <h2>🎲 八红桃发牌配置</h2>
+      <span class="tip">两阶段：癞子概率分配 + 牌力补偿</span>
+      <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeDealBaConfig()">✕</button>
+    </div>
+    <div style="padding:20px 28px;overflow-y:auto;flex:1">
+
+      <!-- 癞子概率档位 -->
+      <div class="ba-section-label">📊 癞子概率档位</div>
+      <table class="ba-tier-table">
+        <thead>
+          <tr><th>档位</th><th>最少</th><th>最多</th><th>权重(%)</th><th></th></tr>
+        </thead>
+        <tbody id="baTierBody"></tbody>
+      </table>
+      <div class="ba-tier-total">
+        权重总和：<span id="baTierTotal">0</span>%
+        <span id="baTierHint"></span>
+      </div>
+
+      <!-- 机器人配置 -->
+      <div class="ba-section-label">🤖 机器人配置</div>
+      <div class="ba-form-row">
+        <label>机器人最多癞子数</label>
+        <input type="number" id="baRobotMax" min="0" max="8" value="1" class="ba-input-num" />
+      </div>
+
+      <!-- 补偿控制 -->
+      <div class="ba-section-label">⚖️ 牌力补偿</div>
+      <div class="ba-form-row">
+        <label>补偿模式</label>
+        <select id="baControlMode" onchange="onBaControlToggle()">
+          <option value="0">关闭（纯随机）</option>
+          <option value="1" selected>开启（牌力均衡）</option>
+        </select>
+      </div>
+      <div class="ba-form-row" id="baThresholdRow">
+        <label>补偿触发阈值</label>
+        <input type="range" id="baThreshold" min="10" max="80" value="30" class="ba-slider"
+               oninput="document.getElementById('baThresholdVal').textContent=this.value+'%'" />
+        <span class="ba-slider-val" id="baThresholdVal">30%</span>
+      </div>
+
+      <!-- 牌力评分权重 -->
+      <div class="ba-section-label">⭐ 牌力评分权重</div>
+      <div class="ba-score-grid" id="baScoreGrid"></div>
+
+    </div>
+    <div class="config-footer">
+      <div class="summary" id="baSummary"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" style="padding:8px 18px;font-size:0.85rem" onclick="resetDealBaConfig()">↺ 恢复默认</button>
+        <button class="btn primary" style="padding:8px 24px;font-size:0.85rem" onclick="applyDealBaConfig()">✓ 应用</button>
+        <button class="btn danger" style="padding:8px 18px;font-size:0.85rem" onclick="closeDealBaConfig()">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── State ──
@@ -1098,11 +1310,17 @@ function renderStrats(results, bestIdx) {
 function doClear() {
   currentHand = null;
   sortResult = null;
-  document.getElementById('handDisplay').innerHTML = '<span style="color:var(--text-dim);font-size:0.9rem">点击「发牌」开始</span>';
+  baDealResult = null;
+  baActiveSeat = 0;
+  // 重置发牌区为初始占位
+  document.getElementById('baTabs').innerHTML = '<span style="color:var(--text-dim);font-size:0.9rem;padding:20px 0;display:block;text-align:center">点击「🂠 发牌」开始</span>';
+  document.getElementById('baPlayerInfo').style.display = 'none';
+  document.getElementById('baHandDisplay').style.display = 'none';
+  document.getElementById('baHexBox').style.display = 'none';
+  document.getElementById('baSortBtnRow').style.display = 'none';
+  document.getElementById('baCompLog').style.display = 'none';
   document.getElementById('zonesContainer').style.display = 'none';
   document.getElementById('stratsContainer').style.display = 'none';
-  document.getElementById('handHexBox').style.display = 'none';
-  document.getElementById('handHexText').textContent = '';
   document.getElementById('sortHexText').textContent = '';
   document.getElementById('infoBar').style.display = 'none';
   document.getElementById('btnSort').disabled = true;
@@ -1406,24 +1624,30 @@ async function submitConfig() {
       showToast('校验失败: ' + data.error);
       return;
     }
-    // Success — use this hand
+    // Success — use this hand, render into ba area as single-player view
     currentHand = data.hand;
     document.getElementById('infoBar').style.display = 'flex';
     document.getElementById('infoWild').textContent = data.wild_count;
     document.getElementById('infoNat').textContent = data.total - data.wild_count;
     document.getElementById('infoStrats').textContent = '-';
     document.getElementById('infoBestSingles').textContent = '-';
-    renderHand(data.hand);
     document.getElementById('btnSort').disabled = false;
     document.getElementById('zonesContainer').style.display = 'none';
     document.getElementById('stratsContainer').style.display = 'none';
     sortResult = null;
 
-    // 显示编码
-    if (data.hand_hex) {
-      document.getElementById('handHexText').textContent = data.hand_hex;
-      document.getElementById('handHexBox').style.display = 'flex';
-    }
+    // 渲染到 ba 区域（单玩家模式）
+    baDealResult = null; // 标记为非八红桃发牌
+    baActiveSeat = 0;
+    renderBaHand(data.hand);
+    document.getElementById('baTabs').innerHTML = '<div class="ba-tab active"><span class="tab-role">🟢 P1 · 配牌模式</span></div>';
+    document.getElementById('baPlayerInfo').style.display = 'flex';
+    document.getElementById('baPlayerInfo').innerHTML = `<span>配牌模式 · P1</span><span>癞子：<span class="power-val">${data.wild_count}</span></span>`;
+    document.getElementById('baHandDisplay').style.display = 'flex';
+    document.getElementById('baHexBox').style.display = 'flex';
+    document.getElementById('baHexText').textContent = data.hand_hex || '';
+    document.getElementById('baSortBtnRow').style.display = 'block';
+    document.getElementById('baCompLog').style.display = 'none';
 
     closeConfig();
     showToast('配牌成功！' + data.wild_count + '张癞子 / 27张手牌');
@@ -1431,6 +1655,373 @@ async function submitConfig() {
     showToast('发牌失败: ' + e.message);
   }
 }
+// ════════════════════════════════════════════════════════════
+//  八红桃发牌系统 (BaHongTao Deal)
+// ════════════════════════════════════════════════════════════
+
+// ── 默认配置 ──
+const BA_SCORE_KEYS = [
+  { key:'bomb',           name:'炸弹',     icon:'💣' },
+  { key:'same_color_link',name:'同花顺',   icon:'🌸' },
+  { key:'steel_plate',    name:'钢板',     icon:'🔧' },
+  { key:'link_pair',      name:'连对',     icon:'🔗' },
+  { key:'big_joker',      name:'大王',     icon:'👑' },
+  { key:'three',          name:'三张',     icon:'三' },
+  { key:'small_joker',    name:'小王',     icon:'🃏' },
+  { key:'wild',           name:'癞子',     icon:'★' },
+];
+const BA_DEFAULT_TIERS = [
+  { min:0, max:2, weight:69 },
+  { min:3, max:4, weight:20 },
+  { min:5, max:7, weight:10 },
+  { min:8, max:8, weight:1  },
+];
+const BA_DEFAULT_SCORES = {
+  bomb:30, same_color_link:25, steel_plate:15, link_pair:10,
+  big_joker:10, three:6, small_joker:6, wild:5,
+};
+const BA_DEFAULTS = {
+  tiers: JSON.parse(JSON.stringify(BA_DEFAULT_TIERS)),
+  robot_max_wilds: 1,
+  control_mode: 1,
+  compensate_threshold: 30,
+  scores: { ...BA_DEFAULT_SCORES },
+};
+
+// ── 运行时状态 ──
+let baConfig = null;        // 当前配置 (从 localStorage 加载)
+let baDealResult = null;    // 发牌结果
+let baActiveSeat = 0;       // 当前查看的座位 (0-3)
+
+// ── 配置加载/保存 ──
+function loadBaConfig() {
+  try {
+    const saved = localStorage.getItem('baDealConfig');
+    if (saved) {
+      baConfig = JSON.parse(saved);
+      // 补全可能缺失的字段
+      if (!baConfig.tiers) baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
+      if (!baConfig.scores) baConfig.scores = { ...BA_DEFAULT_SCORES };
+    } else {
+      baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
+    }
+  } catch(e) {
+    baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
+  }
+}
+
+function saveBaConfig() {
+  localStorage.setItem('baDealConfig', JSON.stringify(baConfig));
+}
+
+// ── 弹窗打开/关闭 ──
+function openDealBaConfig() {
+  if (!baConfig) loadBaConfig();
+  renderBaTiers();
+  renderBaScores();
+  document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
+  document.getElementById('baControlMode').value = baConfig.control_mode;
+  document.getElementById('baThreshold').value = baConfig.compensate_threshold;
+  document.getElementById('baThresholdVal').textContent = baConfig.compensate_threshold + '%';
+  onBaControlToggle();
+  document.getElementById('dealBaOverlay').classList.add('active');
+}
+
+function closeDealBaConfig() {
+  document.getElementById('dealBaOverlay').classList.remove('active');
+}
+
+// ── 概率档位渲染 ──
+function renderBaTiers() {
+  const tbody = document.getElementById('baTierBody');
+  tbody.innerHTML = '';
+  baConfig.tiers.forEach((tier, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="tier-label">档位 ${idx + 1}</td>
+      <td><input type="number" min="0" max="8" value="${tier.min}"
+           onchange="updateBaTier(${idx},'min',this.value)" /></td>
+      <td><input type="number" min="0" max="8" value="${tier.max}"
+           onchange="updateBaTier(${idx},'max',this.value)" /></td>
+      <td><input type="number" min="0" max="100" value="${tier.weight}"
+           onchange="updateBaTier(${idx},'weight',this.value)" oninput="updateBaTierTotal()" /></td>
+      <td><button class="del-btn" onclick="removeBaTier(${idx})" title="删除">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  // 添加行按钮
+  const addRow = document.createElement('tr');
+  addRow.className = 'ba-add-tier';
+  addRow.innerHTML = `<td colspan="5"><button onclick="addBaTier()">+ 添加档位</button></td>`;
+  tbody.appendChild(addRow);
+  updateBaTierTotal();
+}
+
+function updateBaTier(idx, field, value) {
+  baConfig.tiers[idx][field] = parseInt(value) || 0;
+  if (field === 'weight') updateBaTierTotal();
+}
+
+function addBaTier() {
+  baConfig.tiers.push({ min:0, max:1, weight:5 });
+  renderBaTiers();
+}
+
+function removeBaTier(idx) {
+  if (baConfig.tiers.length <= 1) { showToast('至少保留一个档位'); return; }
+  baConfig.tiers.splice(idx, 1);
+  renderBaTiers();
+}
+
+function updateBaTierTotal() {
+  const total = baConfig.tiers.reduce((s, t) => s + (t.weight || 0), 0);
+  document.getElementById('baTierTotal').textContent = total;
+  const hint = document.getElementById('baTierHint');
+  if (Math.abs(total - 100) < 0.01) {
+    hint.innerHTML = '<span class="ok">✓ 合法</span>';
+  } else {
+    hint.innerHTML = `<span class="err">需=100（差${(100 - total).toFixed(1)}）</span>`;
+  }
+}
+
+// ── 评分权重渲染 ──
+function renderBaScores() {
+  const grid = document.getElementById('baScoreGrid');
+  grid.innerHTML = '';
+  BA_SCORE_KEYS.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'ba-score-item';
+    div.innerHTML = `
+      <label>${item.icon} ${item.name}</label>
+      <input type="number" min="0" max="999" value="${baConfig.scores[item.key] || 0}"
+             onchange="baConfig.scores['${item.key}']=parseInt(this.value)||0" />
+    `;
+    grid.appendChild(div);
+  });
+}
+
+// ── 补偿开关 ──
+function onBaControlToggle() {
+  const mode = parseInt(document.getElementById('baControlMode').value);
+  const row = document.getElementById('baThresholdRow');
+  row.style.opacity = mode === 1 ? '1' : '0.35';
+  row.style.pointerEvents = mode === 1 ? 'auto' : 'none';
+}
+
+// ── 恢复默认 ──
+function resetDealBaConfig() {
+  baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
+  renderBaTiers();
+  renderBaScores();
+  document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
+  document.getElementById('baControlMode').value = baConfig.control_mode;
+  document.getElementById('baThreshold').value = baConfig.compensate_threshold;
+  document.getElementById('baThresholdVal').textContent = baConfig.compensate_threshold + '%';
+  onBaControlToggle();
+  showToast('已恢复默认配置');
+}
+
+// ── 提交发牌 ──
+// ── 应用配置（保存，下次发牌生效）──
+function applyDealBaConfig() {
+  // 校验权重总和
+  const total = baConfig.tiers.reduce((s, t) => s + (t.weight || 0), 0);
+  if (Math.abs(total - 100) > 0.01) {
+    showToast(`权重总和需=100，当前=${total}`);
+    return;
+  }
+  // 读取表单值到 config
+  baConfig.robot_max_wilds = parseInt(document.getElementById('baRobotMax').value) || 0;
+  baConfig.control_mode = parseInt(document.getElementById('baControlMode').value);
+  baConfig.compensate_threshold = parseInt(document.getElementById('baThreshold').value);
+
+  saveBaConfig();
+  closeDealBaConfig();
+  showToast('发牌配置已保存，点击「🂠 发牌」生效');
+}
+
+// ── 执行发牌（使用已保存的配置）──
+async function doBaDeal() {
+  if (!baConfig) loadBaConfig();
+
+  // 构造请求体
+  const tiersStr = baConfig.tiers.map(t => `${t.min}-${t.max}:${t.weight}`).join('|');
+  const body = {
+    config: {
+      wild_tiers: tiersStr,
+      robot_max_wilds: baConfig.robot_max_wilds,
+      control_mode: baConfig.control_mode,
+      compensate_threshold: baConfig.compensate_threshold,
+      scores: { ...baConfig.scores },
+    },
+  };
+
+  // 显示 loading
+  document.getElementById('loading').classList.add('active');
+  document.getElementById('btnDeal').disabled = true;
+
+  try {
+    const resp = await fetch('api/deal_ba', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    baDealResult = data;
+    baActiveSeat = 0;
+
+    // 隐藏理牌区
+    document.getElementById('zonesContainer').style.display = 'none';
+    document.getElementById('stratsContainer').style.display = 'none';
+    sortResult = null;
+
+    renderBaTabs();
+    renderBaPlayer(baActiveSeat);
+
+    // 同时设置 currentHand 为当前查看的玩家（方便后续理牌）
+    currentHand = data.players[0];
+    document.getElementById('btnSort').disabled = false;
+
+    // 更新顶部信息栏
+    document.getElementById('infoBar').style.display = 'flex';
+    document.getElementById('infoWild').textContent = data.wild_counts[0];
+    document.getElementById('infoNat').textContent = 27 - data.wild_counts[0];
+    document.getElementById('infoStrats').textContent = '-';
+    document.getElementById('infoBestSingles').textContent = '-';
+
+    showToast(`发牌完成！P1癞子${data.wild_counts[0]}张`);
+  } catch(e) {
+    showToast('发牌失败: ' + e.message);
+  } finally {
+    document.getElementById('btnDeal').disabled = false;
+    document.getElementById('loading').classList.remove('active');
+  }
+}
+
+// ── 4人 Tab 渲染 ──
+function renderBaTabs() {
+  const container = document.getElementById('baTabs');
+  container.innerHTML = '';
+  const roles = ['你 (人类)', '机器人', '机器人', '机器人'];
+  const colors = ['🟢', '🔵', '🟡', '🟠'];
+  for (let i = 0; i < 4; i++) {
+    const tab = document.createElement('div');
+    tab.className = 'ba-tab' + (i === baActiveSeat ? ' active' : '');
+    tab.onclick = () => { baActiveSeat = i; renderBaTabs(); renderBaPlayer(i); };
+    const wc = baDealResult.wild_counts[i];
+    const score = baDealResult.power_evals[i].score;
+    tab.innerHTML = `
+      <span class="tab-role">${colors[i]} P${i+1} · ${roles[i]}</span>
+      <span class="tab-wilds">癞${wc}</span>
+      <span class="tab-score">💪${score}</span>
+    `;
+    container.appendChild(tab);
+  }
+}
+
+// ── 单人手牌+信息渲染 ──
+function renderBaPlayer(seat) {
+  const hand = baDealResult.players[seat];
+  const wc = baDealResult.wild_counts[seat];
+  const pe = baDealResult.power_evals[seat];
+
+  // 手牌区
+  renderBaHand(hand);
+
+  // 编码
+  const hex = baDealResult.players_hex[seat];
+  document.getElementById('baHexText').textContent = hex;
+
+  // 牌力信息
+  const infoDiv = document.getElementById('baPlayerInfo');
+  infoDiv.style.display = 'flex';
+  document.getElementById('baHandDisplay').style.display = 'flex';
+  document.getElementById('baHexBox').style.display = 'flex';
+  document.getElementById('baSortBtnRow').style.display = 'block';
+  const d = pe.details;
+  const roles = ['你 (人类)', '机器人', '机器人', '机器人'];
+  const chips = [
+    { label:'💣 炸弹', val:d.bombs },
+    { label:'🌸 同花顺', val:d.flushes },
+    { label:'🔧 钢板', val:d.steels },
+    { label:'🔗 连对', val:d.link_pairs },
+    { label:'三 三张', val:d.threes },
+    { label:'👑 大王', val:d.big_joker },
+    { label:'🃏 小王', val:d.small_joker },
+  ];
+  infoDiv.innerHTML = `
+    <span>座位 P${seat+1} · ${roles[seat]}</span>
+    <span>癞子：<span class="power-val">${wc}</span></span>
+    <span>牌力：<span class="power-val">${pe.score}</span></span>
+    ${chips.map(c => `<span class="detail-chip">${c.label} <span class="chip-val">${c.val}</span></span>`).join('')}
+  `;
+
+  // 补偿日志
+  const logDiv = document.getElementById('baCompLog');
+  const logs = baDealResult.compensation_log;
+  if (logs && logs.length > 0) {
+    logDiv.style.display = 'block';
+    logDiv.innerHTML = `
+      <div class="log-title">⚖️ 牌力补偿记录（${logs.length}轮）</div>
+      ${logs.map(l => `<div class="log-entry">第${l.round}轮：P${l.from_seat+1} ⇄ P${l.to_seat+1} 交换${l.cards_swapped}张（差距${l.gap_before}%）</div>`).join('')}
+    `;
+  } else {
+    logDiv.style.display = 'none';
+  }
+}
+
+// ── 手牌渲染（复用 renderHand 逻辑但渲染到 baHandDisplay）──
+function renderBaHand(hand) {
+  const container = document.getElementById('baHandDisplay');
+  container.innerHTML = '';
+
+  const order = {A:14, K:13, Q:12, J:11};
+  const rankVal = r => order[r] || parseInt(r) || 0;
+
+  const groups = {};
+  hand.forEach(c => {
+    const key = c.is_wild ? 'wild' : c.rank;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(c);
+  });
+
+  const sortedKeys = Object.keys(groups).sort((a,b) => {
+    if (a === 'wild') return -1; if (b === 'wild') return 1;
+    if (a === 'BJ') return -1; if (b === 'BJ') return 1;
+    if (a === 'SJ') return -1; if (b === 'SJ') return 1;
+    return rankVal(b) - rankVal(a);
+  });
+
+  sortedKeys.forEach(key => {
+    const cardGroup = document.createElement('div');
+    cardGroup.className = 'card-group';
+    groups[key].forEach((c, i) => {
+      const el = document.createElement('div');
+      el.className = `card ${cardClass(c)} hand-card`;
+      el.style.marginTop = i === 0 ? '0' : '-55px';
+      el.style.position = 'relative';
+      if (c.is_wild) {
+        el.textContent = '癞';
+      } else if (c.rank === 'SJ' || c.rank === 'BJ') {
+        el.textContent = cardLabel(c);
+      } else {
+        el.innerHTML = `<span style="font-weight:700">${cardLabel(c)}</span><span style="font-size:0.8rem;margin-left:2px">${cardSuit(c)}</span>`;
+      }
+      cardGroup.appendChild(el);
+    });
+    container.appendChild(cardGroup);
+  });
+}
+
+// ── 理牌当前玩家 ──
+function baSortCurrent() {
+  if (!baDealResult) return;
+  currentHand = baDealResult.players[baActiveSeat];
+  document.getElementById('btnSort').disabled = false;
+  doSort();
+}
+
+// 页面加载时初始化发牌配置
+loadBaConfig();
 </script>
 </body>
 </html>
