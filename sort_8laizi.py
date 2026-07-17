@@ -1721,8 +1721,8 @@ def _roll_wild_count_for_one(tiers: list, rng: random.Random) -> int:
     for tier in tiers:
         cumulative += tier.weight
         if r <= cumulative:
-            return tier.sample_count()
-    return tiers[-1].sample_count()
+            return tier.sample_count(rng)
+    return tiers[-1].sample_count(rng)
 
 
 def _assign_wilds_phase1(config: DealConfig, rng: random.Random) -> list:

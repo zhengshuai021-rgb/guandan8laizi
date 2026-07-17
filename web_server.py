@@ -125,7 +125,6 @@ def api_deal_ba():
         from deal_config import DealConfig, ScoreWeights, WildTier, parse_wild_tiers
         cfg = DealConfig(level=level)
         cfg.wild_mode = int(config_dict.get("wild_mode", 8))
-        cfg.total_wilds = cfg.wild_mode
         if "wild_tiers" in config_dict:
             cfg.wild_tiers = parse_wild_tiers(str(config_dict["wild_tiers"]))
         else:

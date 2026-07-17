@@ -66,10 +66,11 @@ class WildTier:
     def contains(self, n: int) -> bool:
         return self.min_val <= n <= self.max_val
 
-    def sample_count(self) -> int:
-        """在该档位范围内均匀随机取一个整数。"""
+    def sample_count(self, rng=None) -> int:
+        """在该档位范围内均匀随机取一个整数。可传入 rng 保证可复现。"""
         import random
-        return random.randint(self.min_val, self.max_val)
+        r = rng if rng is not None else random
+        return r.randint(self.min_val, self.max_val)
 
     def __repr__(self):
         return f"WildTier({self.min_val}-{self.max_val}:{self.weight}%)"
@@ -98,16 +99,16 @@ class DealConfig:
     compensate_threshold: float = 30.0  # 百分比
     scores: ScoreWeights = field(default_factory=ScoreWeights)
 
-    # 基本常量（根据 wild_mode 自动设置）
+    # 基本常量
     total_cards: int = 108
-    total_wilds: int = 8  # 2模式=2, 8模式=8
     players: int = 4
     hand_size: int = 27
     level: str = "2"  # 级牌点数（癞子的原身）
 
-    def __post_init__(self):
-        """根据 wild_mode 同步 total_wilds"""
-        self.total_wilds = self.wild_mode
+    @property
+    def total_wilds(self) -> int:
+        """癞子总数，由 wild_mode 自动派生（2模式=2, 8模式=8）"""
+        return self.wild_mode
 
     def total_weight(self) -> float:
         return sum(t.weight for t in self.wild_tiers)
@@ -189,7 +190,6 @@ def load_config_from_section(section: dict, level: str = "2") -> DealConfig:
 
     if "wildmode" in s:
         cfg.wild_mode = int(s["wildmode"])
-        cfg.total_wilds = cfg.wild_mode
 
     if "wildtiers" in s:
         cfg.wild_tiers = parse_wild_tiers(s["wildtiers"])
