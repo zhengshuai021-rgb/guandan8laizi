@@ -10,7 +10,7 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from sort_8laizi import (
-    Card, deal_random_hand, cards_to_json, cards_to_hex, card_to_hex, sort_8laizi_with_details,
+    Card, cards_to_json, cards_to_hex, card_to_hex, sort_8laizi_with_details,
     build_full_deck_cards, validate_deal, build_full_deck, SUITS, RANKS,
     RANK_HEX, SUIT_CODE,
     deal_ba_hong_tao, evaluate_hand_power,
@@ -29,32 +29,17 @@ def index():
     return resp
 
 
-@app.route("/api/deal", methods=["POST"])
-def api_deal():
-    data = request.get_json() or {}
-    level = data.get("level", "2")
-    seed = data.get("seed")
-    cards = deal_random_hand(level, seed)
-    wild_count = sum(1 for c in cards if c.is_wild)
-    return jsonify({
-        "hand": cards_to_json(cards),
-        "hand_hex": cards_to_hex(cards),
-        "wild_count": wild_count,
-        "total": len(cards),
-        "level": level,
-        "seed": seed,
-    })
-
-
 @app.route("/api/deck", methods=["GET"])
 def api_deck():
     """返回完整 108 张牌库（供配牌弹窗使用）。"""
     level = request.args.get("level", "2")
-    cards = build_full_deck_cards(level)
+    wild_mode = int(request.args.get("wild_mode", 8))
+    cards = build_full_deck_cards(level, wild_mode=wild_mode)
     return jsonify({
         "cards": cards_to_json(cards),
         "total": len(cards),
         "level": level,
+        "wild_mode": wild_mode,
     })
 
 
@@ -65,9 +50,10 @@ def api_deal_custom():
     """
     data = request.get_json() or {}
     level = data.get("level", "2")
+    wild_mode = int(data.get("wild_mode", 8))
     player_ids = data.get("players", [[], [], [], []])
 
-    deck = build_full_deck_cards(level)
+    deck = build_full_deck_cards(level, wild_mode=wild_mode)
     cid_to_card = {c.cid: c for c in deck}
 
     validation = validate_deal(player_ids)
@@ -94,6 +80,7 @@ def api_deal_custom():
         "wild_count": wild_count,
         "total": len(p1_hand),
         "level": level,
+        "wild_mode": wild_mode,
         "all_counts": [len(h) for h in players_hands],
     })
 

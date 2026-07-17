@@ -1065,90 +1065,6 @@ function copyHex(elementId, btn) {
   });
 }
 
-// ── Deal ──
-async function doDeal() {
-  document.getElementById('btnDeal').disabled = true;
-  document.getElementById('loading').classList.add('active');
-  document.getElementById('zonesContainer').style.display = 'none';
-  document.getElementById('stratsContainer').style.display = 'none';
-  sortResult = null;
-  document.getElementById('btnSort').disabled = true;
-
-  try {
-    const resp = await fetch('api/deal', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ level: '2' })
-    });
-    const data = await resp.json();
-    currentHand = data.hand;
-
-    document.getElementById('infoBar').style.display = 'flex';
-    document.getElementById('infoWild').textContent = data.wild_count;
-    document.getElementById('infoNat').textContent = data.total - data.wild_count;
-    document.getElementById('infoStrats').textContent = '-';
-    document.getElementById('infoBestSingles').textContent = '-';
-
-    renderHand(data.hand);
-    document.getElementById('btnSort').disabled = false;
-    
-    // 显示编码
-    if (data.hand_hex) {
-      document.getElementById('handHexText').textContent = data.hand_hex;
-      document.getElementById('handHexBox').style.display = 'flex';
-    }
-    
-    showToast(`发牌完成！${data.wild_count}张癞子 / 27张手牌`);
-  } catch(e) {
-    showToast('发牌失败: ' + e.message);
-  } finally {
-    document.getElementById('btnDeal').disabled = false;
-    document.getElementById('loading').classList.remove('active');
-  }
-}
-
-// ── Render hand ──
-function renderHand(hand) {
-  const container = document.getElementById('handDisplay');
-  container.innerHTML = '';
-
-  const order = {A:14, K:13, Q:12, J:11};
-  const rankVal = r => order[r] || parseInt(r) || 0;
-
-  const groups = {};
-  hand.forEach(c => {
-    const key = c.is_wild ? 'wild' : c.rank;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(c);
-  });
-
-  const sortedKeys = Object.keys(groups).sort((a,b) => {
-    if (a === 'wild') return -1; if (b === 'wild') return 1;
-    if (a === 'BJ') return -1; if (b === 'BJ') return 1;
-    if (a === 'SJ') return -1; if (b === 'SJ') return 1;
-    return rankVal(b) - rankVal(a);
-  });
-
-  sortedKeys.forEach(key => {
-    const cardGroup = document.createElement('div');
-    cardGroup.className = 'card-group';
-    groups[key].forEach((c, i) => {
-      const el = document.createElement('div');
-      el.className = `card ${cardClass(c)} hand-card`;
-      el.style.marginTop = i === 0 ? '0' : '-55px';
-      el.style.position = 'relative';
-      if (c.is_wild) {
-        el.textContent = '癞';
-      } else if (c.rank === 'SJ' || c.rank === 'BJ') {
-        el.textContent = cardLabel(c);
-      } else {
-        el.innerHTML = `<span style="font-weight:700">${cardLabel(c)}</span><span style="font-size:0.8rem;margin-left:2px">${cardSuit(c)}</span>`;
-      }
-      cardGroup.appendChild(el);
-    });
-    container.appendChild(cardGroup);
-  });
-}
-
 // ── Sort ──
 async function doSort() {
   if (!currentHand) return;
@@ -1389,7 +1305,7 @@ function cardRankLabel(c) {
 async function openConfig() {
   document.getElementById('configOverlay').classList.add('active');
   try {
-    const resp = await fetch('api/deck');
+    const resp = await fetch(`api/deck?wild_mode=${currentWildMode}`);
     const data = await resp.json();
     deckCards = data.cards;
     playerAssign = [[],[],[],[]];
@@ -1641,7 +1557,7 @@ async function submitConfig() {
   try {
     const resp = await fetch('api/deal_custom', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ players: playerAssign, level:'2' })
+      body: JSON.stringify({ players: playerAssign, level:'2', wild_mode: currentWildMode })
     });
     const data = await resp.json();
     if (!data.ok) {

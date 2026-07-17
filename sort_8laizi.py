@@ -1139,6 +1139,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                     try_one(strategy, bomb_wilds, order, budgets)
 
     _run_group("O_flush_first", EXTRACTION_ORDERS)
+    _run_group("O_flush_single", EXTRACTION_ORDERS)
     _run_group("N_bomb_first", EXTRACTION_ORDERS)
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
     _run_group("O_flush_first", orders_no_straight)
