@@ -1564,7 +1564,8 @@ async function submitConfig() {
       showToast('校验失败: ' + data.error);
       return;
     }
-    // Success — use this hand, render into ba area as single-player view
+    // Success — 渲染全部4人到 ba 区域
+    currentWildMode = data.wild_mode || currentWildMode;
     currentHand = data.hand;
     document.getElementById('infoBar').style.display = 'flex';
     document.getElementById('infoWild').textContent = data.wild_count;
@@ -1576,18 +1577,18 @@ async function submitConfig() {
     document.getElementById('stratsContainer').style.display = 'none';
     sortResult = null;
 
-    // 渲染到 ba 区域（单玩家模式）
-    baDealResult = null; // 标记为非八红桃发牌
+    // 构建 baDealResult 供 Tab 切换和理牌使用
+    baDealResult = {
+      players: data.players,
+      players_hex: data.players_hex,
+      wild_counts: data.wild_counts,
+      power_evals: data.wild_counts.map(wc => ({ score: 0, details: {} })),
+      compensation_log: [],
+      wild_mode: data.wild_mode,
+    };
     baActiveSeat = 0;
-    renderBaHand(data.hand);
-    document.getElementById('baTabs').innerHTML = '<div class="ba-tab active"><span class="tab-role">🟢 P1 · 配牌模式</span></div>';
-    document.getElementById('baPlayerInfo').style.display = 'flex';
-    document.getElementById('baPlayerInfo').innerHTML = `<span>配牌模式 · P1</span><span>癞子：<span class="power-val">${data.wild_count}</span></span>`;
-    document.getElementById('baHandDisplay').style.display = 'flex';
-    document.getElementById('baHexBox').style.display = 'flex';
-    document.getElementById('baHexText').textContent = data.hand_hex || '';
-    document.getElementById('baSortBtnRow').style.display = 'block';
-    document.getElementById('baCompLog').style.display = 'none';
+    renderBaTabs();
+    renderBaPlayer(0);
 
     closeConfig();
     showToast('配牌成功！' + data.wild_count + '张癞子 / 27张手牌');
@@ -1996,8 +1997,10 @@ function renderBaHand(hand) {
 
 // ── 理牌当前玩家 ──
 function baSortCurrent() {
-  if (!baDealResult) return;
-  currentHand = baDealResult.players[baActiveSeat];
+  if (baDealResult && baDealResult.players) {
+    currentHand = baDealResult.players[baActiveSeat];
+  }
+  if (!currentHand) return;
   document.getElementById('btnSort').disabled = false;
   doSort();
 }

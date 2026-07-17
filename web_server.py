@@ -70,18 +70,19 @@ def api_deal_custom():
         hand = [cid_to_card[cid] for cid in ids]
         players_hands.append(hand)
 
-    # 返回 P1 的手牌 + 全部信息
-    p1_hand = players_hands[0]
-    wild_count = sum(1 for c in p1_hand if c.is_wild)
+    # 返回全部4人手牌 + P1信息（兼容旧格式）
     return jsonify({
         "ok": True,
-        "hand": cards_to_json(p1_hand),
-        "hand_hex": cards_to_hex(p1_hand),
-        "wild_count": wild_count,
-        "total": len(p1_hand),
+        "hand": cards_to_json(players_hands[0]),
+        "hand_hex": cards_to_hex(players_hands[0]),
+        "wild_count": sum(1 for c in players_hands[0] if c.is_wild),
+        "total": len(players_hands[0]),
         "level": level,
         "wild_mode": wild_mode,
         "all_counts": [len(h) for h in players_hands],
+        "players": [cards_to_json(h) for h in players_hands],
+        "players_hex": [cards_to_hex(h) for h in players_hands],
+        "wild_counts": [sum(1 for c in h if c.is_wild) for h in players_hands],
     })
 
 
