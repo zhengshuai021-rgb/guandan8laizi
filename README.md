@@ -1,6 +1,6 @@
-# 八癞子掼蛋 — 一键理牌
+# 掼蛋一键理牌
 
-> 掼蛋扑克一键理牌工具，支持含 0~8 张万能牌（癞子）的 27 张手牌自动编排。
+> 掼蛋扑克一键理牌工具，兼容 **普通掼蛋（2癞子）** 和 **八癞子（8癞子）** 两种模式。
 > 核心算法枚举数千种候选方案，按加权评分选出最优牌型组合。
 
 ---
@@ -42,35 +42,40 @@ guandan8laizi/
 
 ## 1. 功能概述
 
-将玩家的 27 张手牌（含 0~8 张万能癞子牌）自动编排成最优牌型组合。目标：**减少单张散牌**、**优先组成炸弹/同花顺/顺子/木板/钢板/三带二**。
+将玩家的 27 张手牌（含万能癞子牌）自动编排成最优牌型组合。目标：**减少单张散牌**、**优先组成炸弹/同花顺/顺子/木板/钢板/三带二**。
 
-### 与普通掼蛋的关键差异
+### 双模式支持
 
-| 维度 | 普通掼蛋 | 八癞子 |
+| 维度 | 普通掼蛋（2癞子） | 八癞子（8癞子） |
 |------|----------|--------|
-| 癞子数量 | 2 张（红桃级牌） | 0~8 张（全部 4 花色 × 2 副牌 = 8 张级牌） |
-| 搜索空间 | ~120 种组合 | ~数千种组合 |
-| 新增维度 | 无 | 癞子在炸弹/同花顺/顺子/木板/钢板/三带二之间的分配比例 |
-| 同花顺 | 5 张同花连续 | 严格 5 张同花连续（不可延长） |
+| 癞子数量 | 2 张（仅红桃级牌） | 8 张（全部 4 花色 × 2 副牌 = 8 张级牌） |
+| 理牌路径 | **快速路径**（跳过去顺子策略组，~1.1x 加速） | **完整路径**（4 策略组 × probe × 预算枚举） |
+| 搜索空间 | ~数百种组合 | ~数千种组合 |
+| 自动切换 | `n_lz ≤ FAST_WILD_THRESHOLD(=2)` 时自动走快速路径 | 默认完整路径 |
+| 评分权重 | ScoreWild=10, ScoreSameColorLink=15 | ScoreWild=5, ScoreSameColorLink=25 |
 
 ---
 
 ## 2. 调用链总览
 
 ```
-┌─ Web UI: 点击【一键理牌】按钮
+┌─ Web UI: 点击【✦ 一键理牌】按钮
 │
 ├─ POST /api/sort → web_server.py api_sort()
-│   └─ sort_8laizi_with_details(hand_cards)
+│   ├─ 根据 wild_mode 决定 fast_mode (2癞子=True, 8癞子=False)
+│   └─ sort_8laizi_with_details(hand_cards, laizi_limit, fast_mode)
 │       ├─ 分离癞子 / 自然牌
-│       ├─ 枚举所有策略组合
+│       ├─ fast_mode=True (2癞子):
+│       │   ├─ 3 策略组 × 24排列 × probe × 预算枚举
+│       │   └─ 跳过 O_flush_no_straight 组（减少25%调用量）
+│       ├─ fast_mode=False (8癞子):
 │       │   ├─ O_flush_first       × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       │   ├─ O_flush_single      × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       │   ├─ N_bomb_first        × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       │   └─ O_flush_no_straight  × 18排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       ├─ probe 优化：先跑不限 budget 的版本，只在实际消耗范围内枚举
+│       ├─ 剩余癞子喂炸弹扩线（4炸>5炸>...，同张数牌值大优先）
 │       ├─ 按 score 排序，取最优
-│       └─ 三区划分 → 返回 JSON（含 hand_hex/cards_hex 编码）
+│       └─ 三区划分 → 返回 JSON（含 cards_hex 编码）
 │
 └─ 前端: 渲染策略对比表（前端分页，每页20条）+ 三区卡牌展示
 ```
@@ -129,29 +134,40 @@ class SortResult:
 
 ## 4. 核心算法：策略枚举
 
-### 4.1 四大策略组
+### 4.1 快速路径 vs 完整路径
+
+| | 完整路径（8癞子） | 快速路径（2癞子） |
+|---|---|---|
+| 策略组 | 4组（flush_first + flush_single + bomb_first + no_straight） | 3组（去掉 no_straight） |
+| probe 裁剪 | ✅ 保留 | ✅ 保留 |
+| 预算枚举 | ✅ 全量 | ✅ 全量（组合少） |
+| 质量验证 | 基准 | 92%等价 + 8%更优 + 0%更差 |
+
+通过 `fast_mode` 参数控制，`None` 时按 `n_lz ≤ FAST_WILD_THRESHOLD(=2)` 自动检测。
+
+### 4.2 四大策略组（完整路径）
 
 | 策略组 | 提取顺序 | 说明 |
 |--------|---------|------|
 | **O_flush_first** | 王炸 → 同花顺 → 炸弹 → 24排列 → 三张/对子/单张 | 同花顺优先于炸弹 |
 | **O_flush_single** | 同 O_flush_first，但同花顺最多取 1 个 | 避免同花顺贪心消耗过多自然牌 |
 | **N_bomb_first** | 王炸 → 炸弹 → 同花顺 → 24排列 → 三张/对子/单张 | 炸弹优先于同花顺 |
-| **O_flush_no_straight** | 同 O_flush_first，但去掉"顺子"提取 | 跳过顺子项（18排列） |
+| **O_flush_no_straight** | 同 O_flush_first，但去掉"顺子"提取 | 跳过顺子项（18排列），仅完整路径使用 |
 
-### 4.2 癞子预算分配（wild_budgets）
+### 4.3 癞子预算分配（wild_budgets）
 
-八癞子的核心创新维度。每种牌型（顺子/木板/钢板/三带二）都有一个 `max_wilds` 预算上限，控制该牌型最多消耗多少个癞子。
+每种牌型（顺子/木板/钢板/三带二/炸弹/同花顺）都有一个 `max_wilds` 预算上限，控制该牌型最多消耗多少个癞子。
 
 ```python
-# 4 种牌型的癞子预算组合示例（n_remaining=3）
-{"straight": 2, "board": 1, "steel": 0, "three_two": 0}
-{"straight": 0, "board": 0, "steel": 2, "three_two": 1}
+# 6 种牌型的癞子预算组合示例（n_remaining=3）
+{"straight": 2, "board": 1, "steel": 0, "three_two": 0, "bomb": 0, "flush": 0}
+{"straight": 0, "board": 0, "steel": 2, "three_two": 1, "bomb": 0, "flush": 0}
 ...
 ```
 
 通过 `generate_wild_budgets()` 函数枚举所有可能的分配方案。
 
-### 4.3 probe 优化
+### 4.4 probe 优化
 
 为避免枚举无意义的 budget 组合（如给某牌型分配 5 个癞子但实际只用 1 个），采用 **probe + caps_override** 策略：
 
@@ -159,9 +175,15 @@ class SortResult:
 2. probe 返回各牌型**实际消耗的癞子数**
 3. 后续只在 `[0, 实际消耗]` 范围内枚举 budget
 
-效果：5 癞子手牌从 18144 条策略降至 ~37 条，8 癞子从 8 秒降至 0.2 秒。
+### 4.5 剩余癞子喂炸弹扩线
 
-### 4.4 24 种提取排列
+预算提取完成后、残余收尾之前，未消耗的癞子优先喂给已有炸弹扩线：
+
+- 每轮选**张数最少**的炸弹优先（4炸 > 5炸 > 6炸 > ...）
+- 张数相同时选**牌值最大**的炸弹
+- 无炸弹时由 `extract_remaining` 自然按三张 > 对子 > 单张兜底
+
+### 4.6 24 种提取排列
 
 ```python
 EXTRACTION_ORDERS = list(itertools.permutations(
@@ -280,7 +302,7 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 
 ### 7.2 Web UI 配置
 
-点击页面 **⚙️ 配置项** 按钮弹出癞子预算配置窗口：
+点击页面 **⚙️ 癞子预算配置** 按钮弹出癞子预算配置窗口：
 
 - 6 个滑块对应 6 种牌型（同花顺/炸弹/顺子/木板/钢板/三带二），每个 0~8
 - 每行右侧有 **☐ 不限制** 勾选框，勾选后该牌型不受约束（滑块置灰，值显示 ∞）
@@ -334,7 +356,7 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 | `/api/deal` | POST | 随机发牌：27 张手牌，返回 JSON（含 `hand_hex`） |
 | `/api/deck` | GET | 返回完整 108 张牌库（供配牌弹窗使用） |
 | `/api/deal_custom` | POST | 自定义配牌：输入 4 个玩家的 cid 列表 |
-| `/api/sort` | POST | 理牌：输入卡片列表，返回全量策略详情 + 三区划分 |
+| `/api/sort` | POST | 理牌：输入卡片列表 + `wild_mode`，返回全量策略详情 + 三区划分 |
 | `/api/deal_ba` | POST | **八红桃发牌**：两阶段（癞子概率分配 + 自然牌补偿），返回 4 人 × 27 张 |
 | `/api/deal_ba_config` | GET | 返回当前默认发牌配置（JSON） |
 | `/api/evaluate_power` | POST | 评估单副手牌牌力（癞子跨牌型复用计分） |
@@ -401,8 +423,10 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 
 ```ini
 [BaHongTaoDealCard]
+# 癞子模式: 2=普通掼蛋(仅红桃级牌), 8=八癞子(4花色级牌)
+WildMode=8
 WildTiers=0-2:69|3-4:20|5-7:10|8:1
-RobotMaxWilds=1
+RobotMaxWilds=2
 ControlMode=1
 CompensateThreshold=30
 ScoreBomb=30
@@ -415,15 +439,33 @@ ScoreSmallJoker=6
 ScoreWild=5
 ```
 
-### 10.4 代码调用
+### 10.4 模式切换自动调整
+
+WebUI 切换癞子模式时，以下配置项自动调整：
+
+| 配置项 | 2癞子模式 | 8癞子模式 | 原因 |
+|--------|----------|----------|------|
+| WildTiers | `0-0:30\|1-1:50\|2-2:20` | `0-2:69\|3-4:20\|5-7:10\|8:1` | 总共才2张，档位上限不超过2 |
+| RobotMaxWilds | 1 | 2 | 2张癞子最多给机器人1张 |
+| ScoreWild | 10 | 5 | 2癞子模式下每张更稀缺更珍贵 |
+| ScoreSameColorLink | 15 | 25 | 2癞子几乎不可能组同花顺 |
+
+其余配置（补偿模式/阈值/炸弹/钢板/连对/三张/大小王）两种模式通用。
+
+### 10.5 代码调用
 
 ```python
 from sort_8laizi import deal_ba_hong_tao, evaluate_hand_power
 from deal_config import default_config, load_config_from_file
 
-# 默认配置
+# 默认配置（8癞子）
 cfg = default_config()
 result = deal_ba_hong_tao(cfg, seed=42)
+
+# 2癞子模式
+cfg.wild_mode = 2
+cfg.total_wilds = 2
+result = deal_ba_hong_tao(cfg, seed=100)
 
 # 从 INI 文件加载
 cfg = load_config_from_file("deal_config.ini")
@@ -434,58 +476,51 @@ result.players          # [[Card,...], ...]  4 人 × 27 张
 result.wild_counts      # [int, ...]  每人癞子数
 result.power_evals      # [{score, details, weights}, ...]
 result.compensation_log # [{round, from_seat, to_seat, ...}, ...]
-
-# 单独评估牌力
-ev = evaluate_hand_power(hand_cards, cfg.scores)
-print(ev["score"], ev["details"])
 ```
 
-### 10.5 Web API
+### 10.6 Web API
 
 ```bash
-# 发牌
+# 8癞子发牌（默认）
 curl -X POST http://127.0.0.1:5001/api/deal_ba \
   -H "Content-Type: application/json" \
-  -d '{"seed": 42, "level": "2"}'
+  -d '{"config": {"wild_mode": 8}}'
 
-# 自定义配置发牌
+# 2癞子发牌
 curl -X POST http://127.0.0.1:5001/api/deal_ba \
   -H "Content-Type: application/json" \
-  -d '{"seed": 100, "config": {"robot_max_wilds": 2, "control_mode": 0}}'
+  -d '{"config": {"wild_mode": 2, "wild_tiers": "0-0:30|1-1:50|2-2:20", "robot_max_wilds": 1}}'
 
-# 从 INI 文件加载配置
-curl -X POST http://127.0.0.1:5001/api/deal_ba \
+# 理牌（2癞子自动走快速路径）
+curl -X POST http://127.0.0.1:5001/api/sort \
   -H "Content-Type: application/json" \
-  -d '{"seed": 42, "config_file": "deal_config.ini"}'
-
-# 查看默认配置
-curl http://127.0.0.1:5001/api/deal_ba_config
-
-# 评估牌力
-curl -X POST http://127.0.0.1:5001/api/evaluate_power \
-  -H "Content-Type: application/json" \
-  -d '{"cards": [{"suit":"S","rank":"A","is_wild":false,"cid":0}, ...]}'
+  -d '{"cards": [...], "wild_mode": 2}'
 ```
 
-### 10.6 座位约定
+### 10.7 座位约定
 
 | 座位 | 角色 | 癞子限制 |
 |------|------|---------|
 | P1 (seat 0) | 人类 | 无限制（按概率档位） |
-| P2-P4 (seat 1-3) | 机器人 | RobotMaxWilds（受总和=8约束） |
+| P2-P4 (seat 1-3) | 机器人 | RobotMaxWilds（受总和=WildMode约束） |
 
 ---
 
 ## 11. 公共接口（sort_8laizi 导出）
 
 ```python
-sort_8laizi(hand_cards, laizi_limit=None)          # → (bombs, others)
-sort_8laizi_with_details(cards, laizi_limit=None)  # → dict 含 all_results + zones
-try_all_strategies(naturals, wilds, laizi_limit=None)  # → SortResult
-deal_random_hand(level, seed)    # → [Card, ...]  27 张手牌
-build_full_deck(level)           # → [(suit,rank,is_wild), ...]  108 张
-build_full_deck_cards(level)     # → [Card, ...]  108 张带 cid
-validate_deal(player_cards)      # → dict 校验自定义配牌合法性
+# 理牌
+sort_8laizi(hand_cards, laizi_limit=None, fast_mode=None)          # → (bombs, others)
+sort_8laizi_with_details(cards, laizi_limit=None, fast_mode=None)  # → dict 含 all_results + zones
+try_all_strategies(naturals, wilds, laizi_limit=None, fast_mode=None)  # → SortResult
+
+# 牌库构建
+build_full_deck(level="2", wild_mode=8)       # → [(suit,rank,is_wild), ...]  108 张
+build_full_deck_cards(level="2", wild_mode=8) # → [Card, ...]  108 张带 cid
+deal_random_hand(level, seed)                 # → [Card, ...]  27 张手牌
+validate_deal(player_cards)                   # → dict 校验自定义配牌合法性
+
+# 编码
 cards_to_json(cards)             # → [{suit,rank,is_wild,cid}, ...]
 card_to_hex(c)                   # → str 单张十六进制编码
 cards_to_hex(cards)              # → str 逗号分隔编码
@@ -493,14 +528,19 @@ cards_to_hex(cards)              # → str 逗号分隔编码
 # 八红桃发牌系统
 deal_ba_hong_tao(config, seed, level)  # → DealResult  4人×27张
 evaluate_hand_power(cards, scores)      # → {score, details, weights}
+
+# fast_mode 参数:
+#   None  = 自动检测 (n_lz ≤ 2 走快速路径)
+#   True  = 强制快速路径
+#   False = 强制完整路径
 ```
 
 ### deal_config 导出
 
 ```python
 from deal_config import (
-    DealConfig, ScoreWeights, WildTier,   # 数据类
-    default_config,                        # → DealConfig 默认配置
+    DealConfig, ScoreWeights, WildTier,   # 数据类 (DealConfig.wild_mode: 2 或 8)
+    default_config,                        # → DealConfig 默认配置 (8癞子)
     load_config_from_file,                 # → DealConfig 从 INI 文件
     load_config_from_ini_text,             # → DealConfig 从 INI 字符串
     parse_wild_tiers,                      # → [WildTier] 解析 "0-2:69|..."
