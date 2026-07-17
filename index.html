@@ -1726,6 +1726,7 @@ function loadBaConfig() {
     if (saved) {
       baConfig = JSON.parse(saved);
       // 补全可能缺失的字段
+      if (!baConfig.wild_mode) baConfig.wild_mode = 8;
       if (!baConfig.tiers) baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
       if (!baConfig.scores) baConfig.scores = { ...BA_DEFAULT_SCORES };
     } else {
@@ -1743,8 +1744,11 @@ function saveBaConfig() {
 // ── 弹窗打开/关闭 ──
 function openDealBaConfig() {
   if (!baConfig) loadBaConfig();
+  // 兼容旧配置（无 wild_mode 字段）
+  if (!baConfig.wild_mode) baConfig.wild_mode = 8;
   // 设置模式单选按钮
-  document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`).checked = true;
+  const radio = document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`);
+  if (radio) radio.checked = true;
   renderBaTiers();
   renderBaScores();
   document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
@@ -1866,7 +1870,8 @@ function onBaControlToggle() {
 // ── 恢复默认 ──
 function resetDealBaConfig() {
   baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
-  document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`).checked = true;
+  const radio = document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`);
+  if (radio) radio.checked = true;
   renderBaTiers();
   renderBaScores();
   document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
