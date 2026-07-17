@@ -871,6 +871,9 @@ EXTRACTION_ORDERS = list(itertools.permutations(
 # 4 种牌型 key（用于预算分配）
 BUDGET_TYPES = ["bomb", "flush", "straight", "board", "steel", "three_two"]
 
+# 快速路径阈值：癞子数 ≤ 此值时自动启用快速路径（跳过 probe + 预算枚举）
+FAST_WILD_THRESHOLD = 2
+
 
 # ================================================================
 #  癞子预算配置表（laiziLimit_config）
@@ -1076,14 +1079,20 @@ def _boost_best_group_with_leftover_wilds(wild_pool: list, bombs: list):
 # ================================================================
 
 def try_all_strategies(natural_cards: list, wild_cards: list,
-                       laizi_limit: dict = None) -> SortResult:
+                       laizi_limit: dict = None,
+                       fast_mode: bool = None) -> SortResult:
     """
     枚举所有策略组合，返回最优。带去重和剪枝。
     
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
                  None 则用全局默认配置。
+    fast_mode:   None=自动检测(n_lz≤FAST_WILD_THRESHOLD时快速)，
+                 True=强制快速路径，False=强制完整路径。
     """
     n_lz = len(wild_cards)
+    if fast_mode is None:
+        fast_mode = (n_lz <= FAST_WILD_THRESHOLD)
+
     best = None
     seen_results = set()
 
@@ -1098,6 +1107,24 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
         if best is None or result.score() < best.score():
             best = result
 
+    # ── 快速路径：保留 probe 裁剪，但去掉去顺子策略组（减少33%调用）──
+    if fast_mode:
+        def _run_group_fast(strategy, orders):
+            for bomb_wilds in range(n_lz + 1):
+                remaining = n_lz - bomb_wilds
+                for order in orders:
+                    usage, _ = _probe_actual_wild_usage(
+                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    for budgets in all_budgets:
+                        try_one(strategy, bomb_wilds, order, budgets)
+
+        _run_group_fast("O_flush_first", EXTRACTION_ORDERS)
+        _run_group_fast("O_flush_single", EXTRACTION_ORDERS)
+        _run_group_fast("N_bomb_first", EXTRACTION_ORDERS)
+        return best
+
+    # ── 完整路径：probe + 预算枚举 ──
     def _run_group(strategy, orders):
         nonlocal best
         for bomb_wilds in range(n_lz + 1):
@@ -1119,19 +1146,22 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     return best
 
 
-def sort_8laizi(hand_cards: list, laizi_limit: dict = None) -> tuple:
+def sort_8laizi(hand_cards: list, laizi_limit: dict = None,
+                fast_mode: bool = None) -> tuple:
     """
-    八癞子一键理牌主入口。
+    一键理牌主入口（兼容 2癞子 / 8癞子）。
     
     返回 (bombs, others):
       bombs  - 王炸 + 同花顺 + 炸弹（炸弹区）
       others - 顺子/木板/钢板/三带二/三张/对子/单张
     
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
+    fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
-    best = try_all_strategies(natural_cards, wild_cards, laizi_limit=laizi_limit)
+    best = try_all_strategies(natural_cards, wild_cards, laizi_limit=laizi_limit,
+                              fast_mode=fast_mode)
 
     if best is None:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
@@ -1140,9 +1170,10 @@ def sort_8laizi(hand_cards: list, laizi_limit: dict = None) -> tuple:
     return (best.bombs_output, best.others_output)
 
 
-def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None) -> dict:
+def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
+                             fast_mode: bool = None) -> dict:
     """
-    八癞子一键理牌（含详情），供 Web UI 使用。
+    一键理牌（含详情），供 Web UI 使用（兼容 2癞子 / 8癞子）。
     
     返回 dict:
       all_results: 所有策略结果列表，每个包含 strategy/meta/score/stats/bombs/others/zones
@@ -1151,10 +1182,13 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None) -> dict
       zones: 最优结果的三区划分
     
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
+    fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
     n_lz = len(wild_cards)
+    if fast_mode is None:
+        fast_mode = (n_lz <= FAST_WILD_THRESHOLD)
 
     all_results = []
     seen = set()
@@ -1177,41 +1211,57 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None) -> dict
             },
         })
 
-    def _run_strategy_group(strategy, bomb_wilds_range, orders, label_fn):
-        for bomb_wilds in bomb_wilds_range:
-            remaining = n_lz - bomb_wilds
-            for order in orders:
-                # probe：先跑不限 budget 的版本，拿到各牌型实际癞子消耗上限
-                usage, _ = _probe_actual_wild_usage(
-                    natural_cards, wild_cards, strategy, bomb_wilds, order)
-                # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
-                all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
-                for budgets in all_budgets:
-                    result = execute_strategy(
-                        natural_cards, wild_cards,
-                        strategy, bomb_wilds, order,
-                        wild_budgets=budgets
-                    )
-                    sig = result.score()
-                    if sig in seen:
-                        continue
-                    seen.add(sig)
-                    add_result(result, label_fn(bomb_wilds, order, budgets))
+    def _try_and_add(strategy, bomb_wilds, order, budgets, label_fn):
+        result = execute_strategy(
+            natural_cards, wild_cards, strategy, bomb_wilds, order, wild_budgets=budgets)
+        sig = result.score()
+        if sig in seen:
+            return
+        seen.add(sig)
+        add_result(result, label_fn(bomb_wilds, order, budgets))
 
-    bw_range = range(n_lz + 1)
+    # ── 快速路径：保留 probe 裁剪，去掉去顺子策略组 ──
+    if fast_mode:
+        FAST_STRATEGIES = [("O_flush_first", "同花顺优先"),
+                           ("O_flush_single", "单同花"),
+                           ("N_bomb_first", "炸弹优先")]
+        for strategy, label in FAST_STRATEGIES:
+            for bomb_wilds in range(n_lz + 1):
+                remaining = n_lz - bomb_wilds
+                for order in EXTRACTION_ORDERS:
+                    usage, _ = _probe_actual_wild_usage(
+                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    for budgets in all_budgets:
+                        _try_and_add(strategy, bomb_wilds, order, budgets,
+                            lambda bw, o, b, s=label: {"strategy": s, "bomb_wilds": bw, "order": list(o), "budgets": b})
 
-    _run_strategy_group("O_flush_first", bw_range, EXTRACTION_ORDERS,
-        lambda bw, o, b: {"strategy": "O_flush_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+    # ── 完整路径：probe + 预算枚举 ──
+    else:
+        def _run_strategy_group(strategy, bomb_wilds_range, orders, label_fn):
+            for bomb_wilds in bomb_wilds_range:
+                remaining = n_lz - bomb_wilds
+                for order in orders:
+                    usage, _ = _probe_actual_wild_usage(
+                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    for budgets in all_budgets:
+                        _try_and_add(strategy, bomb_wilds, order, budgets, label_fn)
 
-    _run_strategy_group("O_flush_single", bw_range, EXTRACTION_ORDERS,
-        lambda bw, o, b: {"strategy": "O_flush_single", "bomb_wilds": bw, "order": list(o), "budgets": b})
+        bw_range = range(n_lz + 1)
 
-    _run_strategy_group("N_bomb_first", bw_range, EXTRACTION_ORDERS,
-        lambda bw, o, b: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+        _run_strategy_group("O_flush_first", bw_range, EXTRACTION_ORDERS,
+            lambda bw, o, b: {"strategy": "O_flush_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
-    orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
-    _run_strategy_group("O_flush_first", bw_range, orders_no_straight,
-        lambda bw, o, b: {"strategy": "O_flush_no_straight", "bomb_wilds": bw, "order": list(o), "budgets": b})
+        _run_strategy_group("O_flush_single", bw_range, EXTRACTION_ORDERS,
+            lambda bw, o, b: {"strategy": "O_flush_single", "bomb_wilds": bw, "order": list(o), "budgets": b})
+
+        _run_strategy_group("N_bomb_first", bw_range, EXTRACTION_ORDERS,
+            lambda bw, o, b: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+
+        orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
+        _run_strategy_group("O_flush_first", bw_range, orders_no_straight,
+            lambda bw, o, b: {"strategy": "O_flush_no_straight", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
     if not all_results:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
