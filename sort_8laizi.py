@@ -179,6 +179,27 @@ def _active_naturals(pool: list, rank: str) -> list:
     return [c for c in pool if not c.used and not c.is_wild and c.rank == rank]
 
 
+def _build_rank_index(pool: list) -> dict:
+    """Build a rank → list[Card] index for all natural cards in pool.
+    Faster than repeated _active_naturals scans."""
+    idx = {}
+    for c in pool:
+        if not c.is_wild and c.rank not in ("SJ", "BJ"):
+            idx.setdefault(c.rank, []).append(c)
+    return idx
+
+
+def _take_from_index(rank_idx: dict, rank: str) -> Card:
+    """Take one unused natural card of rank from the index. Returns Card or None."""
+    cards = rank_idx.get(rank)
+    if not cards:
+        return None
+    for c in cards:
+        if not c.used:
+            return c
+    return None
+
+
 def _reset_used(cards: list):
     """Reset used flag for all cards (for reuse across strategy attempts)."""
     for c in cards:
@@ -428,6 +449,7 @@ def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list
     max_wilds: 最多用多少个癞子做顺子。"""
     straights = []
     rank_cnt = rank_counts(pool)
+    rank_idx = _build_rank_index(pool)
     wilds_used = 0
     while True:
         available = sorted(
@@ -471,19 +493,19 @@ def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list
         start_r = available[si]
         si_idx = RANK_ORDER[start_r]
 
-        # 提取
+        # 提取（使用 rank_idx 替代 next(... for x in pool ...)）
         taken = []
         if is_ace_high:
             for ri in [9, 10, 11, 12]:  # 10, J, Q, K
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
-                    c = next((x for x in pool if not x.used and x.rank == r and not x.is_wild), None)
+                    c = _take_from_index(rank_idx, r)
                     if c:
                         c.used = True
                         taken.append(c)
                         rank_cnt[r] = max(0, rank_cnt[r] - 1)
             if rank_cnt.get("A", 0) > 0:
-                c = next((x for x in pool if not x.used and x.rank == "A" and not x.is_wild), None)
+                c = _take_from_index(rank_idx, "A")
                 if c:
                     c.used = True
                     taken.append(c)
@@ -492,7 +514,7 @@ def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list
             for ri in range(si_idx, si_idx + 5):
                 r = RANKS[ri]
                 if rank_cnt.get(r, 0) > 0:
-                    c = next((x for x in pool if not x.used and x.rank == r and not x.is_wild), None)
+                    c = _take_from_index(rank_idx, r)
                     if c:
                         c.used = True
                         taken.append(c)
@@ -733,30 +755,39 @@ def extract_remaining(pool: list, wild_pool: list) -> tuple:
     pairs = []
     singles = []
     rank_cnt = rank_counts(pool)
+    rank_idx = _build_rank_index(pool)
+
+    def _take_naturals(rank: str, n: int) -> list:
+        """Take up to n unused natural cards of rank from index."""
+        result = []
+        for c in rank_idx.get(rank, []):
+            if len(result) >= n:
+                break
+            if not c.used:
+                c.used = True
+                result.append(c)
+        return result
 
     # 三张
     for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
         cnt = rank_cnt[rank]
         while cnt + len(_active_wilds(wild_pool)) >= 3 and cnt >= 1:
             take = min(cnt, 3)
-            cards = _active_naturals(pool, rank)[:take]
-            need = 3 - take
-            _mark_used(cards)
+            cards = _take_naturals(rank, take)
+            need = 3 - len(cards)
             rank_cnt[rank] = max(0, rank_cnt[rank] - len(cards))
             cnt -= len(cards)
             w = _take_wilds(wild_pool, need)
             triples.append(CardGroup(w + cards, "triple",
                                      cards[0].power if cards else WILD_POWER))
 
-    # 对子
-    rank_cnt = rank_counts(pool)
+    # 对子（rank_cnt 已维护，无需重算）
     for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
         cnt = rank_cnt[rank]
         while cnt + len(_active_wilds(wild_pool)) >= 2 and cnt >= 1:
             take = min(cnt, 2)
-            cards = _active_naturals(pool, rank)[:take]
-            need = 2 - take
-            _mark_used(cards)
+            cards = _take_naturals(rank, take)
+            need = 2 - len(cards)
             rank_cnt[rank] = max(0, rank_cnt[rank] - len(cards))
             cnt -= len(cards)
             w = _take_wilds(wild_pool, need)
