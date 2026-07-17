@@ -1663,6 +1663,8 @@ function loadBaConfig() {
   } catch(e) {
     baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
   }
+  // 同步当前模式（页面刷新后配牌弹窗仍跟随上次设置的模式）
+  currentWildMode = baConfig.wild_mode || 8;
 }
 
 function saveBaConfig() {
