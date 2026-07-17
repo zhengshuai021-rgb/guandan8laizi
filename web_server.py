@@ -137,11 +137,13 @@ def api_deal_ba():
         # 从 dict 构建 DealConfig
         from deal_config import DealConfig, ScoreWeights, WildTier, parse_wild_tiers
         cfg = DealConfig(level=level)
+        cfg.wild_mode = int(config_dict.get("wild_mode", 8))
+        cfg.total_wilds = cfg.wild_mode
         if "wild_tiers" in config_dict:
             cfg.wild_tiers = parse_wild_tiers(str(config_dict["wild_tiers"]))
         else:
             cfg.wild_tiers = parse_wild_tiers("0-2:69|3-4:20|5-7:10|8:1")
-        cfg.robot_max_wilds = int(config_dict.get("robot_max_wilds", 1))
+        cfg.robot_max_wilds = int(config_dict.get("robot_max_wilds", 2))
         cfg.control_mode = int(config_dict.get("control_mode", 1))
         cfg.compensate_threshold = float(config_dict.get("compensate_threshold", 30))
         scores_dict = config_dict.get("scores", {})
@@ -168,6 +170,7 @@ def api_deal_ba_config():
     level = request.args.get("level", "2")
     cfg = default_config(level=level)
     return jsonify({
+        "wild_mode": cfg.wild_mode,
         "wild_tiers": [
             {"min": t.min_val, "max": t.max_val, "weight": t.weight}
             for t in cfg.wild_tiers
@@ -216,7 +219,10 @@ def api_sort():
     ) for c in data.get("cards", [])]
 
     laizi_limit = data.get("laizi_limit")
-    result = sort_8laizi_with_details(hand_cards, laizi_limit=laizi_limit)
+    wild_mode = data.get("wild_mode", 8)
+    # 2癞子模式自动走快速路径，8癞子走完整路径
+    fast_mode = (wild_mode == 2)
+    result = sort_8laizi_with_details(hand_cards, laizi_limit=laizi_limit, fast_mode=fast_mode)
     result["best_index"] = 0
     # 为每个 zone 的 cards 添加 hex 编码（直接从 dict 计算，避免重复创建 Card）
     for zone_name, groups in result.get("zones", {}).items():

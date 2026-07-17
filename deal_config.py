@@ -36,6 +36,7 @@ from typing import List, Tuple, Optional
 # ================================================================
 
 DEFAULT_INI_TEXT = """[BaHongTaoDealCard]
+WildMode=8
 WildTiers=0-2:69|3-4:20|5-7:10|8:1
 RobotMaxWilds=2
 ControlMode=1
@@ -90,18 +91,23 @@ class ScoreWeights:
 @dataclass
 class DealConfig:
     """八红桃发牌完整配置"""
+    wild_mode: int = 8  # 2=普通掼蛋(2癞子), 8=八癞子
     wild_tiers: List[WildTier] = field(default_factory=list)
-    robot_max_wilds: int = 1
+    robot_max_wilds: int = 2
     control_mode: int = 1  # 0=none 1=compensate
     compensate_threshold: float = 30.0  # 百分比
     scores: ScoreWeights = field(default_factory=ScoreWeights)
 
-    # 基本常量（一般不变）
+    # 基本常量（根据 wild_mode 自动设置）
     total_cards: int = 108
-    total_wilds: int = 8
+    total_wilds: int = 8  # 2模式=2, 8模式=8
     players: int = 4
     hand_size: int = 27
     level: str = "2"  # 级牌点数（癞子的原身）
+
+    def __post_init__(self):
+        """根据 wild_mode 同步 total_wilds"""
+        self.total_wilds = self.wild_mode
 
     def total_weight(self) -> float:
         return sum(t.weight for t in self.wild_tiers)
@@ -109,6 +115,7 @@ class DealConfig:
     def __repr__(self):
         return (
             f"DealConfig(\n"
+            f"  wild_mode={self.wild_mode}\n"
             f"  wild_tiers={self.wild_tiers}\n"
             f"  robot_max_wilds={self.robot_max_wilds}\n"
             f"  control_mode={self.control_mode}\n"
@@ -179,6 +186,10 @@ def load_config_from_section(section: dict, level: str = "2") -> DealConfig:
     # 归一化 key 到小写 + 去除行内注释
     s = {k.lower(): _strip_inline_comment(str(v)) for k, v in section.items()}
     cfg = DealConfig(level=level)
+
+    if "wildmode" in s:
+        cfg.wild_mode = int(s["wildmode"])
+        cfg.total_wilds = cfg.wild_mode
 
     if "wildtiers" in s:
         cfg.wild_tiers = parse_wild_tiers(s["wildtiers"])
@@ -256,5 +267,7 @@ if __name__ == "__main__":
     assert cfg.wild_tiers[0].min_val == 0 and cfg.wild_tiers[0].max_val == 2
     assert cfg.wild_tiers[-1].min_val == 8 and cfg.wild_tiers[-1].max_val == 8
     assert cfg.scores.bomb == 30
-    assert cfg.robot_max_wilds == 1
+    assert cfg.robot_max_wilds == 2
+    assert cfg.wild_mode == 8
+    assert cfg.total_wilds == 8
     print("All assertions passed.")

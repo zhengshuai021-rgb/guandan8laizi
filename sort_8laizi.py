@@ -1348,13 +1348,21 @@ def partition_for_display(bombs: list, others: list) -> tuple:
 #  公共接口（供 Web UI 等外部调用）
 # ================================================================
 
-def build_full_deck(level: str = "2") -> list:
-    """构建 2 副牌共 108 张，标记级牌为癞子。返回 [(suit, rank, is_wild), ...]"""
+def build_full_deck(level: str = "2", wild_mode: int = 8) -> list:
+    """构建 2 副牌共 108 张，标记级牌为癞子。返回 [(suit, rank, is_wild), ...]
+    
+    wild_mode=8: 4花色级牌全部为癞子 (8张)
+    wild_mode=2: 仅红桃级牌为癞子 (2张)
+    """
     deck = []
     for _ in range(2):
         for suit in SUITS:
             for rank in RANKS:
-                deck.append((suit, rank, rank == level))
+                if wild_mode == 2:
+                    is_wild = (suit == "H" and rank == level)
+                else:
+                    is_wild = (rank == level)
+                deck.append((suit, rank, is_wild))
     for _ in range(2):
         deck.append(("X", "SJ", False))
     for _ in range(2):
@@ -1379,9 +1387,9 @@ def deal_random_hand(level: str = "2", seed: int = None) -> list:
     return cards
 
 
-def build_full_deck_cards(level: str = "2") -> list:
+def build_full_deck_cards(level: str = "2", wild_mode: int = 8) -> list:
     """构建 2 副牌共 108 张，返回 Card 对象列表（每张牌有唯一 cid）。"""
-    deck_specs = build_full_deck(level)
+    deck_specs = build_full_deck(level, wild_mode=wild_mode)
     cards = []
     for i, (suit, rank, is_wild) in enumerate(deck_specs):
         cards.append(Card(suit, rank, is_wild=is_wild, cid=i))
@@ -1934,6 +1942,7 @@ class DealResult:
             "compensation_log": self.compensation_log,
             "seed": self.seed,
             "level": self.config.level if self.config else "2",
+            "wild_mode": self.config.wild_mode if self.config else 8,
             "total_cards": sum(len(h) for h in self.players),
             "hand_size": len(self.players[0]) if self.players else 0,
         }
@@ -1964,10 +1973,9 @@ def deal_ba_hong_tao(config: DealConfig = None, seed: int = None,
     result.config = config
     result.seed = seed
 
-    # 构建完整牌库
-    deck = build_full_deck_cards(level)
+    # 构建完整牌库（根据 wild_mode 决定癞子花色范围）
+    deck = build_full_deck_cards(level, wild_mode=config.wild_mode)
     wild_deck, natural_deck = _split_deck_by_wild(deck)
-    # natural_deck 应有 100 张（108 - 8 癞子），wild_deck 有 8 张
 
     # ─── Phase 1: 癞子分配 ───
     wild_counts = _assign_wilds_phase1(config, rng)

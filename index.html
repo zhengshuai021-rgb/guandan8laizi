@@ -443,6 +443,17 @@ body::before {
 }
 .ba-section-label:first-child { margin-top:0; }
 
+/* 模式切换 */
+.ba-mode-row {
+  display:flex; gap:20px; margin-bottom:12px;
+}
+.ba-mode-opt {
+  display:flex; align-items:center; gap:6px; cursor:pointer;
+  font-size:0.88rem; color:var(--text-dim);
+}
+.ba-mode-opt input { cursor:pointer; }
+.ba-mode-opt:hover { color:var(--gold-light); }
+
 /* 概率档位表格 */
 .ba-tier-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
 .ba-tier-table th {
@@ -772,6 +783,19 @@ body::before {
       <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeDealBaConfig()">✕</button>
     </div>
     <div style="padding:20px 28px;overflow-y:auto;flex:1">
+
+      <!-- 癞子模式切换 -->
+      <div class="ba-section-label">🎲 癞子模式</div>
+      <div class="ba-mode-row">
+        <label class="ba-mode-opt">
+          <input type="radio" name="baWildMode" value="2" onchange="onBaModeChange(2)" />
+          <span>普通掼蛋（2癞子）</span>
+        </label>
+        <label class="ba-mode-opt">
+          <input type="radio" name="baWildMode" value="8" onchange="onBaModeChange(8)" checked />
+          <span>八癞子（8癞子）</span>
+        </label>
+      </div>
 
       <!-- 癞子概率档位 -->
       <div class="ba-section-label">📊 癞子概率档位</div>
@@ -1137,7 +1161,7 @@ async function doSort() {
     const limit = getActiveLimit();
     const resp = await fetch('api/sort', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ cards: currentHand, laizi_limit: limit })
+      body: JSON.stringify({ cards: currentHand, laizi_limit: limit, wild_mode: currentWildMode })
     });
     sortResult = await resp.json();
 
@@ -1681,8 +1705,9 @@ const BA_DEFAULT_SCORES = {
   big_joker:10, three:6, small_joker:6, wild:5,
 };
 const BA_DEFAULTS = {
+  wild_mode: 8,
   tiers: JSON.parse(JSON.stringify(BA_DEFAULT_TIERS)),
-  robot_max_wilds: 1,
+  robot_max_wilds: 2,
   control_mode: 1,
   compensate_threshold: 30,
   scores: { ...BA_DEFAULT_SCORES },
@@ -1692,6 +1717,7 @@ const BA_DEFAULTS = {
 let baConfig = null;        // 当前配置 (从 localStorage 加载)
 let baDealResult = null;    // 发牌结果
 let baActiveSeat = 0;       // 当前查看的座位 (0-3)
+let currentWildMode = 8;    // 当前发牌的癞子模式 (2/8)，理牌时跟随切换
 
 // ── 配置加载/保存 ──
 function loadBaConfig() {
@@ -1717,6 +1743,8 @@ function saveBaConfig() {
 // ── 弹窗打开/关闭 ──
 function openDealBaConfig() {
   if (!baConfig) loadBaConfig();
+  // 设置模式单选按钮
+  document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`).checked = true;
   renderBaTiers();
   renderBaScores();
   document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
@@ -1729,6 +1757,33 @@ function openDealBaConfig() {
 
 function closeDealBaConfig() {
   document.getElementById('dealBaOverlay').classList.remove('active');
+}
+
+// ── 模式切换 ──
+function onBaModeChange(mode) {
+  baConfig.wild_mode = parseInt(mode);
+  // 2癞子模式: 自动调整概率档位上限和机器人癞子数
+  if (mode == 2) {
+    // 概率档位上限改为 0-2
+    if (baConfig.tiers.length > 0 && baConfig.tiers.every(t => t.max > 2)) {
+      baConfig.tiers = [
+        { min:0, max:0, weight:30 },
+        { min:1, max:1, weight:50 },
+        { min:2, max:2, weight:20 },
+      ];
+      baConfig.robot_max_wilds = 1;
+      renderBaTiers();
+      document.getElementById('baRobotMax').value = 1;
+    }
+  } else {
+    // 8癞子模式: 恢复默认档位
+    if (baConfig.tiers.length > 0 && baConfig.tiers.every(t => t.max <= 2)) {
+      baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
+      baConfig.robot_max_wilds = 2;
+      renderBaTiers();
+      document.getElementById('baRobotMax').value = 2;
+    }
+  }
 }
 
 // ── 概率档位渲染 ──
@@ -1811,6 +1866,7 @@ function onBaControlToggle() {
 // ── 恢复默认 ──
 function resetDealBaConfig() {
   baConfig = JSON.parse(JSON.stringify(BA_DEFAULTS));
+  document.querySelector(`input[name="baWildMode"][value="${baConfig.wild_mode}"]`).checked = true;
   renderBaTiers();
   renderBaScores();
   document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
@@ -1831,13 +1887,15 @@ function applyDealBaConfig() {
     return;
   }
   // 读取表单值到 config
+  baConfig.wild_mode = parseInt(document.querySelector('input[name="baWildMode"]:checked').value);
   baConfig.robot_max_wilds = parseInt(document.getElementById('baRobotMax').value) || 0;
   baConfig.control_mode = parseInt(document.getElementById('baControlMode').value);
   baConfig.compensate_threshold = parseInt(document.getElementById('baThreshold').value);
 
   saveBaConfig();
   closeDealBaConfig();
-  showToast('发牌配置已保存，点击「🂠 发牌」生效');
+  const modeName = baConfig.wild_mode == 2 ? '普通掼蛋' : '八癞子';
+  showToast(`发牌配置已保存（${modeName}），点击「🂠 发牌」生效`);
 }
 
 // ── 执行发牌（使用已保存的配置）──
@@ -1848,6 +1906,7 @@ async function doBaDeal() {
   const tiersStr = baConfig.tiers.map(t => `${t.min}-${t.max}:${t.weight}`).join('|');
   const body = {
     config: {
+      wild_mode: baConfig.wild_mode,
       wild_tiers: tiersStr,
       robot_max_wilds: baConfig.robot_max_wilds,
       control_mode: baConfig.control_mode,
@@ -1868,6 +1927,7 @@ async function doBaDeal() {
     const data = await resp.json();
     baDealResult = data;
     baActiveSeat = 0;
+    currentWildMode = data.wild_mode || 8;
 
     // 隐藏理牌区
     document.getElementById('zonesContainer').style.display = 'none';
