@@ -1704,6 +1704,17 @@ const BA_DEFAULT_SCORES = {
   bomb:30, same_color_link:25, steel_plate:15, link_pair:10,
   big_joker:10, three:6, small_joker:6, wild:5,
 };
+// 2癞子模式的默认评分权重（癞子更珍贵，同花顺几乎不可能）
+const BA_SCORES_2WILD = {
+  bomb:30, same_color_link:15, steel_plate:15, link_pair:10,
+  big_joker:10, three:6, small_joker:6, wild:10,
+};
+// 2癞子模式的默认概率档位
+const BA_TIERS_2WILD = [
+  { min:0, max:0, weight:30 },
+  { min:1, max:1, weight:50 },
+  { min:2, max:2, weight:20 },
+];
 const BA_DEFAULTS = {
   wild_mode: 8,
   tiers: JSON.parse(JSON.stringify(BA_DEFAULT_TIERS)),
@@ -1763,31 +1774,21 @@ function closeDealBaConfig() {
   document.getElementById('dealBaOverlay').classList.remove('active');
 }
 
-// ── 模式切换 ──
+// ── 模式切换：自动调整档位/机器人上限/评分权重 ──
 function onBaModeChange(mode) {
   baConfig.wild_mode = parseInt(mode);
-  // 2癞子模式: 自动调整概率档位上限和机器人癞子数
   if (mode == 2) {
-    // 概率档位上限改为 0-2
-    if (baConfig.tiers.length > 0 && baConfig.tiers.every(t => t.max > 2)) {
-      baConfig.tiers = [
-        { min:0, max:0, weight:30 },
-        { min:1, max:1, weight:50 },
-        { min:2, max:2, weight:20 },
-      ];
-      baConfig.robot_max_wilds = 1;
-      renderBaTiers();
-      document.getElementById('baRobotMax').value = 1;
-    }
+    baConfig.tiers = JSON.parse(JSON.stringify(BA_TIERS_2WILD));
+    baConfig.robot_max_wilds = 1;
+    baConfig.scores = { ...BA_SCORES_2WILD };
   } else {
-    // 8癞子模式: 恢复默认档位
-    if (baConfig.tiers.length > 0 && baConfig.tiers.every(t => t.max <= 2)) {
-      baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
-      baConfig.robot_max_wilds = 2;
-      renderBaTiers();
-      document.getElementById('baRobotMax').value = 2;
-    }
+    baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
+    baConfig.robot_max_wilds = 2;
+    baConfig.scores = { ...BA_DEFAULT_SCORES };
   }
+  renderBaTiers();
+  renderBaScores();
+  document.getElementById('baRobotMax').value = baConfig.robot_max_wilds;
 }
 
 // ── 概率档位渲染 ──
