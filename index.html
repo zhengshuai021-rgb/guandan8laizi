@@ -1815,6 +1815,9 @@ function applyDealBaConfig() {
   baConfig.control_mode = parseInt(document.getElementById('baControlMode').value);
   baConfig.compensate_threshold = parseInt(document.getElementById('baThreshold').value);
 
+  // 同步当前模式（配牌/理牌会跟随此值）
+  currentWildMode = baConfig.wild_mode;
+
   saveBaConfig();
   closeDealBaConfig();
   const modeName = baConfig.wild_mode == 2 ? '普通掼蛋' : '八癞子';
