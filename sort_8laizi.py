@@ -838,29 +838,54 @@ class SortResult:
         self.singles = []
 
     def score(self) -> tuple:
-        bomb5plus = sum(1 for b in self.bombs if b.size >= 5)
-        # 核心权衡：炸弹是掼蛋中的核心压制武器，战略价值远高于同花顺。
-        # bomb 权重 3.5：让"多1炸弹但多2~3单张"的方案仍能胜出
-        # flush 权重 2.5：同花顺仅消化5张牌，战略价值低于炸弹
-        frag_score = (
+        # ── 评分设计原则 ──────────────────────────────────
+        # 从"数个数"改为"算消化效率"：评分基于每张牌的消化质量
+        #
+        # 1. 碎片惩罚（未消化的散牌，越少越好）
+        #    单张 1.0/张 | 对子 0.4/张 | 三张 0.2/张
+        #    （单张最难配合，三张还能带三带二/钢板，惩罚轻）
+        #
+        # 2. 成型奖励（已消化的完整牌型，越多越好）
+        #    炸弹 0.7/张    → 4线=2.8, 5线=3.5, 6线=4.2（大炸弹更受青睐）
+        #    同花顺 0.5/张  → 5张=2.5（炸弹级压制力但一次性）
+        #    顺子/木板/钢板/三带二 0.3/张（常规成型，消化牌即可）
+        #
+        # 3. 关键权衡比例：
+        #    1个4线炸(2.8) > 1个同花顺(2.5) — 炸弹战略价值更高
+        #    1个4线炸(2.8) ≈ 抵消 ~3张单张(3.0) — 多1炸弹但多2~3单张仍可接受
+        # ──────────────────────────────────────────────
+
+        frag_penalty = (
             len(self.singles)
-            + len(self.pairs) * 0.5
-            + len(self.triples) * 0.3
-            - len(self.bombs) * 3.5
-            - len(self.flushes) * 2.5
+            + sum(g.size * 0.4 for g in self.pairs)
+            + sum(g.size * 0.2 for g in self.triples)
         )
+
+        form_bonus = (
+            sum(g.size * 0.7 for g in self.bombs)
+            + sum(g.size * 0.5 for g in self.flushes)
+            + sum(g.size * 0.3 for g in self.straights)
+            + sum(g.size * 0.3 for g in self.boards)
+            + sum(g.size * 0.3 for g in self.steels)
+            + sum(g.size * 0.3 for g in self.three_with_twos)
+        )
+
+        frag_score = frag_penalty - form_bonus
+
         return (
-            # ① 加权碎片分（越小越好 — 综合考虑单张数和炸弹数的平衡）
+            # ① 加权综合分（越小越好）
             frag_score,
-            # ② 以下为 tiebreaker，在 frag_score 相同时决定胜负
-            len(self.singles),           # 单张数（绝对值，越少越好）
-            -bomb5plus,                  # 5+线炸弹数
-            -len(self.straights),        # 顺子数
-            -len(self.steels),           # 钢板数
-            -len(self.boards),           # 木板数
-            -len(self.three_with_twos),  # 三带二数
-            -len(self.triples),          # 三张数
-            -len(self.pairs),            # 对子数
+            # ② tiebreaker：单张绝对值越少越好
+            len(self.singles),
+            # ③ 大炸弹优先（5+线炸弹总张数越多越好）
+            -sum(g.size for g in self.bombs if g.size >= 5),
+            # ④ 常规成型牌型数越多越好
+            -(len(self.straights) + len(self.boards) + len(self.steels)
+              + len(self.three_with_twos)),
+            # ⑤ 对子数越少越好（对子是半成品）
+            len(self.pairs),
+            # ⑥ 三张数越少越好
+            len(self.triples),
         )
 
     @property
