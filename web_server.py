@@ -71,7 +71,11 @@ def api_deal_custom():
         players_hands.append(hand)
 
     # 返回全部4人手牌 + P1信息（兼容旧格式）
-    return jsonify({
+    players_json = [cards_to_json(h) for h in players_hands]
+    players_hx = [cards_to_hex(h) for h in players_hands]
+    wc_list = [sum(1 for c in h if c.is_wild) for h in players_hands]
+    print(f"[DEBUG deal_custom] players_json len={len(players_json)}, hex len={len(players_hx)}, wc={wc_list}", flush=True)
+    result = {
         "ok": True,
         "hand": cards_to_json(players_hands[0]),
         "hand_hex": cards_to_hex(players_hands[0]),
@@ -80,10 +84,12 @@ def api_deal_custom():
         "level": level,
         "wild_mode": wild_mode,
         "all_counts": [len(h) for h in players_hands],
-        "players": [cards_to_json(h) for h in players_hands],
-        "players_hex": [cards_to_hex(h) for h in players_hands],
-        "wild_counts": [sum(1 for c in h if c.is_wild) for h in players_hands],
-    })
+        "players": players_json,
+        "players_hex": players_hx,
+        "wild_counts": wc_list,
+    }
+    print(f"[DEBUG deal_custom] result keys: {list(result.keys())}", flush=True)
+    return jsonify(result)
 
 
 @app.route("/api/deal_ba", methods=["POST"])
