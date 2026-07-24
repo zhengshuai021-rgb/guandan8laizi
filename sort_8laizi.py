@@ -839,14 +839,14 @@ class SortResult:
 
     def score(self) -> tuple:
         bomb5plus = sum(1 for b in self.bombs if b.size >= 5)
-        # 核心权衡：1个4线炸弹 ≈ 消化2.5张"本来会成为单张/对子"的牌
-        # 所以 bomb 权重设为 2.5，让"多1炸弹但多1单张"的方案在接近时胜出
-        # 公式：frag_score = singles + pairs*0.5 + triples*0.3 - bombs*2.5 - flushes*2.5
+        # 核心权衡：炸弹是掼蛋中的核心压制武器，战略价值远高于同花顺。
+        # bomb 权重 3.5：让"多1炸弹但多2~3单张"的方案仍能胜出
+        # flush 权重 2.5：同花顺仅消化5张牌，战略价值低于炸弹
         frag_score = (
             len(self.singles)
             + len(self.pairs) * 0.5
             + len(self.triples) * 0.3
-            - len(self.bombs) * 2.5
+            - len(self.bombs) * 3.5
             - len(self.flushes) * 2.5
         )
         return (
@@ -1033,8 +1033,10 @@ def execute_strategy(natural_cards: list, wild_cards: list,
             return wild_budgets.get(key, 999)
         return 999
 
-    # bomb 和 flush 的实际限额 = min(bomb_wilds/bomb 参数, wild_budgets 配置)
-    bomb_cap = min(bomb_wilds, _budget("bomb"))
+    # bomb_cap 只受 bomb_wilds 参数和 laizi_limit 配置约束，
+    # 不受 wild_budgets["bomb"] 裁剪（因为 budget 从 remaining 分配，
+    # remaining = n_lz - bomb_wilds，若直接 min 会导致 bomb_wilds 永远无法生效）
+    bomb_cap = min(bomb_wilds, get_laizi_limit("bomb", None))
     flush_cap = _budget("flush")
 
     result = SortResult()
