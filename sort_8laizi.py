@@ -839,30 +839,33 @@ class SortResult:
 
     def score(self) -> tuple:
         # ── 评分设计原则 ──────────────────────────────────
-        # 从"数个数"改为"算消化效率"：评分基于每张牌的消化质量
+        # 消化效率 + 牌力加权的综合评分
         #
-        # 1. 碎片惩罚（未消化的散牌，越少越好）
-        #    单张 1.0/张 | 对子 0.4/张 | 三张 0.2/张
-        #    （单张最难配合，三张还能带三带二/钢板，惩罚轻）
+        # 【基础分】按张数计算消化效率
+        #   碎片惩罚：单张 1.0/张 | 对子 0.4/张 | 三张 0.2/张
+        #   成型奖励：炸弹 0.7/张 | 同花顺 0.5/张 | 常规牌型 0.3/张
         #
-        # 2. 成型奖励（已消化的完整牌型，越多越好）
-        #    炸弹 0.7/张    → 4线=2.8, 5线=3.5, 6线=4.2（大炸弹更受青睐）
-        #    同花顺 0.5/张  → 5张=2.5（炸弹级压制力但一次性）
-        #    顺子/木板/钢板/三带二 0.3/张（常规成型，消化牌即可）
-        #
-        # 3. 关键权衡比例：
-        #    1个4线炸(2.8) > 1个同花顺(2.5) — 炸弹战略价值更高
-        #    1个4线炸(2.8) ≈ 抵消 ~3张单张(3.0) — 多1炸弹但多2~3单张仍可接受
+        # 【牌力调整】power 标准化到 [0, 1]，作为微调系数
+        #   power_norm = (power - 3) / (14 - 3)   # 3→0, A→1, 王取首张非癞子
+        #   - 单张大牌惩罚 ×(1 + power_norm×0.5)   # 大牌单张更难脱手，惩罚加重
+        #   - 炸弹大牌奖励 ×(1 + power_norm×0.5)   # 大牌炸弹压制力更强，奖励加重
+        #   - 调整幅度 ±50%，足够区分大小牌但不喧宾夺主
         # ──────────────────────────────────────────────
 
+        def _power_norm(g):
+            """取牌组首张非癞子的 power，标准化到 [0, 1]"""
+            p = g.first_natural_power()
+            p = max(3, min(14, p))
+            return (p - 3) / 11.0
+
         frag_penalty = (
-            len(self.singles)
+            sum(1 + _power_norm(g) * 0.5 for g in self.singles)
             + sum(g.size * 0.4 for g in self.pairs)
             + sum(g.size * 0.2 for g in self.triples)
         )
 
         form_bonus = (
-            sum(g.size * 0.7 for g in self.bombs)
+            sum(g.size * 0.7 * (1 + _power_norm(g) * 0.5) for g in self.bombs)
             + sum(g.size * 0.5 for g in self.flushes)
             + sum(g.size * 0.3 for g in self.straights)
             + sum(g.size * 0.3 for g in self.boards)
