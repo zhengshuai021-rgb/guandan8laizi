@@ -360,13 +360,13 @@ def extract_flush_straights(pool: list, wild_pool: list,
                 if wilds <= remaining:
                     candidates.append((suit, start, wilds, ace_high))
         if candidates:
-            # 优先高位、同高位选癞子最少的
-            candidates.sort(key=lambda x: (-x[1], x[2]))
+            # 优先癞子最少、同癞子数选高位
+            candidates.sort(key=lambda x: (x[2], -x[1]))
             best_suit, best_start, best_wilds, best_ace = candidates[0]
             suit_order = [best_suit]
 
     for suit in suit_order:
-        if remaining <= 0:
+        if remaining < 0:
             break
         cards = suit_map.get(suit, [])
         if not cards:
@@ -390,9 +390,11 @@ def extract_flush_straights(pool: list, wild_pool: list,
                         wilds += 1
 
             if wilds <= remaining:
-                # 优先选高位同花顺（start越大=点数越高），同起点时选癞子少的
-                if best is None or start > best[0] or (
-                    start == best[0] and wilds < best[1]
+                # 优先选癞子消耗最少的同花顺，同癞子数时选低位（节省高位自然牌）
+                # 低位优先的理由：flush 评分不区分 rank，低位 flush 省下 K/Q 等高牌
+                # 值自然牌可投入炸弹（炸弹有 power_norm 加权），净收益更高
+                if best is None or wilds < best[1] or (
+                    wilds == best[1] and start < best[0]
                 ):
                     best = (start, wilds, ace_high)
 
@@ -1076,7 +1078,7 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         for c in pool:
             if is_natural_rank(c):
                 suit_counts[c.suit] += 1
-        flush_suit_order = sorted(SUITS, key=lambda s: suit_counts.get(s, 0))
+        flush_suit_order = sorted(SUITS, key=lambda s: suit_counts.get(s, 0), reverse=True)
         result.flushes = extract_flush_straights(pool, wp,
                                                  max_wilds_for_flush=min(
                                                      max(0, len(wp) - bomb_cap), flush_cap),

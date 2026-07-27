@@ -266,6 +266,50 @@ body::before {
 .pagination button:disabled { opacity:0.35; cursor:default; }
 .pagination .page-info { color:var(--text-dim); font-size:0.75rem; margin:0 4px; }
 
+/* ── Score detail overlay ── */
+.score-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000;
+  display:none; align-items:center; justify-content:center;
+}
+.score-overlay.show { display:flex; }
+.score-modal {
+  background:var(--panel); border:1px solid var(--gold); border-radius:var(--radius);
+  padding:24px 28px; max-width:520px; width:90%; max-height:85vh; overflow-y:auto;
+  color:var(--text);
+}
+.score-modal h3 {
+  font-family:'Playfair Display',serif; color:var(--gold-light); font-size:1.1rem;
+  margin:0 0 16px 0; padding-bottom:10px; border-bottom:1px solid var(--panel-border);
+}
+.score-modal h4 {
+  color:var(--gold); font-size:0.85rem; margin:14px 0 8px 0;
+}
+.score-row {
+  display:flex; justify-content:space-between; padding:4px 0;
+  font-size:0.82rem; border-bottom:1px solid rgba(255,255,255,0.04);
+}
+.score-row .label { color:var(--text-dim); }
+.score-row .value { color:var(--gold-light); font-weight:500; font-family:'Courier New',monospace; }
+.score-row .value.pos { color:#81c784; }
+.score-row .value.neg { color:#ef9a9a; }
+.score-total {
+  display:flex; justify-content:space-between; padding:10px 0; margin-top:8px;
+  font-size:0.9rem; font-weight:600; border-top:2px solid var(--gold);
+}
+.score-total .label { color:var(--gold-light); }
+.score-total .value { color:var(--gold); font-family:'Courier New',monospace; }
+.score-btn-close {
+  display:block; margin:16px auto 0; background:rgba(255,255,255,0.1);
+  border:1px solid var(--panel-border); color:var(--text-dim); border-radius:4px;
+  padding:6px 20px; cursor:pointer; font-size:0.82rem;
+}
+.score-btn-close:hover { background:rgba(212,168,67,0.15); color:var(--gold-light); }
+.score-clickable {
+  color:var(--gold-light); font-weight:600; cursor:pointer; text-decoration:underline;
+  text-decoration-style:dotted; text-underline-offset:3px; text-decoration-color:rgba(212,168,67,0.3);
+}
+.score-clickable:hover { text-decoration-color:var(--gold); }
+
 /* ── Loading ── */
 .loading { display:none; text-align:center; padding:40px; }
 .loading.active { display:block; }
@@ -675,6 +719,7 @@ body::before {
           <thead>
             <tr>
               <th>排名</th><th>策略</th><th>癞子炸弹</th><th>提取顺序</th>
+              <th style="cursor:help" title="综合加权评分，越低越好（点击查看公式）">综合分</th>
               <th>单张</th><th>炸弹</th><th>同花</th><th>5+炸</th>
               <th>顺子</th><th>木板</th><th>钢板</th><th>3+2</th>
               <th>三张</th><th>对子</th>
@@ -686,6 +731,11 @@ body::before {
       <div class="pagination" id="stratPagination" style="display:none"></div>
     </div>
   </div>
+</div>
+
+<!-- ── 评分公式弹窗 ── -->
+<div class="score-overlay" id="scoreOverlay" onclick="if(event.target===this)closeScoreDetail()">
+  <div class="score-modal" id="scoreDetail"></div>
 </div>
 
 <!-- ── 配牌弹窗 ── -->
@@ -1046,6 +1096,89 @@ function groupTypeBadge(g) {
   return groupTypeName(g.group_type);
 }
 
+// ── 评分公式弹窗 ──
+function showScoreDetail(result, isBest) {
+  const s = result.stats;
+  const score = result.score;
+  const meta = result.meta;
+
+  // Build score component labels
+  const scoreLabels = [
+    '加权综合分 (碎片惩罚 − 成型奖励)',
+    '单张数量 (越少越好)',
+    '大炸弹总张数 (5+线炸弹，越多越好)',
+    '常规牌型数 (顺子/木板/钢板/三带二，越多越好)',
+    '对子数量 (越少越好)',
+    '三张数量 (越少越好)'
+  ];
+
+  // Build the detailed formula breakdown
+  const strategyLabelMap = {
+    O_flush_first:'O·同花优先', N_bomb_first:'N·炸弹优先',
+    O_flush_single:'O·单同花', O_flush_no_straight:'O·去顺子'
+  };
+  const orderNames = meta.order.map(x => groupTypeName(x)).join(' → ');
+
+  // Build formula breakdown rows
+  const penItems = [];
+  if (s.single > 0) penItems.push(`单张 ${s.single}×1.0`);
+  if (s.pair > 0) penItems.push(`对子 ${s.pair}×${(s.pair*2*0.4).toFixed(1)}`);
+  if (s.triple > 0) penItems.push(`三张 ${s.triple}×${(s.triple*3*0.2).toFixed(1)}`);
+  
+  // Form bonus items  
+  const bonusItems = [];
+  if (s.bomb > 0) bonusItems.push(`炸弹 ${s.bomb}×${(s.bomb*(s.bomb5plus||4)*0.7).toFixed(1)}`);
+  if (s.flush > 0) bonusItems.push(`同花顺 ${s.flush}×${(s.flush*5*0.5).toFixed(1)}`);
+  if (s.straight > 0) bonusItems.push(`顺子 ${s.straight}×${(s.straight*5*0.3).toFixed(1)}`);
+  if (s.board > 0) bonusItems.push(`木板 ${s.board}×${(s.board*6*0.3).toFixed(1)}`);
+  if (s.steel > 0) bonusItems.push(`钢板 ${s.steel}×${(s.steel*6*0.3).toFixed(1)}`);
+  if (s.three_two > 0) bonusItems.push(`三带二 ${s.three_two}×${(s.three_two*5*0.3).toFixed(1)}`);
+
+  const html = `
+    <h3>${isBest ? '⭐ 最优方案' : '📊 策略方案'} 评分公式分解</h3>
+    
+    <div style="margin-bottom:12px;font-size:0.78rem;color:var(--text-dim)">
+      策略: <b style="color:var(--gold-light)">${strategyLabelMap[meta.strategy]||meta.strategy}</b>
+      &nbsp;|&nbsp; 癞子炸弹: <b style="color:var(--gold-light)">${meta.bomb_wilds}</b>
+      &nbsp;|&nbsp; 提取顺序: <b style="color:var(--gold-light)">${orderNames}</b>
+    </div>
+
+    <h4>评分元组 (6维度，字典序越小越好)</h4>
+    ${score.map((v,i) => `
+      <div class="score-row">
+        <span class="label">${i+1}. ${scoreLabels[i]}</span>
+        <span class="value">${typeof v==='number' ? v.toFixed(v%1?2:0) : v}</span>
+      </div>
+    `).join('')}
+
+    <h4>碎片惩罚 (越小越好)</h4>
+    <div class="score-row"><span class="label">碎片惩罚项</span><span class="value neg">${penItems.length ? penItems.join(' + ') : '0'}</span></div>
+
+    <h4>成型奖励 (越大越好)</h4>
+    <div class="score-row"><span class="label">成型奖励项</span><span class="value pos">${bonusItems.length ? bonusItems.join(' + ') : '0'}</span></div>
+
+    <div class="score-total">
+      <span class="label">综合分 = 碎片惩罚 − 成型奖励</span>
+      <span class="value">${score[0].toFixed(2)}</span>
+    </div>
+    
+    <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
+      说明：综合分越低越好。单张权重 1.0/张(大牌加重)，对子 0.4/张，三张 0.2/张。
+      炸弹 0.7/张(大牌加重)，同花顺 0.5/张，顺子/木板/钢板/三带二 0.3/张。
+      后5维为 tiebreaker，依次比较：单张数 → 大炸弹总张数 → 常规牌型数 → 对子数 → 三张数。
+    </div>
+
+    <button class="score-btn-close" onclick="closeScoreDetail()">关闭</button>
+  `;
+
+  document.getElementById('scoreDetail').innerHTML = html;
+  document.getElementById('scoreOverlay').classList.add('show');
+}
+
+function closeScoreDetail() {
+  document.getElementById('scoreOverlay').classList.remove('show');
+}
+
 // ── Toast ──
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -1208,6 +1341,7 @@ function renderStrats(results, bestIdx) {
         <td style="text-align:left">${strategyLabel}</td>
         <td>${r.meta.bomb_wilds}</td>
         <td style="text-align:left;font-size:0.7rem">${r.meta.order.slice(0,4).map(x=>groupTypeName(x).slice(0,2)).join('→')}</td>
+        <td><span class="score-clickable" onclick="showScoreDetail(sortResult.all_results[${i}],${i===bestIdx});event.stopPropagation()" title="点击查看评分公式">${r.score[0].toFixed(2)}</span></td>
         <td>${statCell(s.single, [2, 6])}</td>
         <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb5plus || 0}</td>
         <td>${s.straight}</td><td>${s.board}</td><td>${s.steel}</td>
