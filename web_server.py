@@ -215,6 +215,7 @@ def api_evaluate_power():
 def api_selftest():
     """Self-test: run sort with known cards and return result for debugging."""
     hex_str = '0x5F,0x32,0x32,0x4D,0x2D,0x3C,0x2C,0x3B,0x1B,0x3A,0x3A,0x2A,0x39,0x29,0x38,0x28,0x17,0x36,0x45,0x25,0x44,0x14,0x23,0x23,0x12,0x22,0x22'
+    level = request.args.get("level", "2")
     RANK_HEX_REV = {1:'A',2:'2',3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',0xA:'10',0xB:'J',0xC:'Q',0xD:'K',0xE:'SJ',0xF:'BJ'}
     SUIT_REV = {1:'D',2:'C',3:'H',4:'S',5:'X'}
     cards = []
@@ -222,13 +223,14 @@ def api_selftest():
         val = int(tok.strip(), 16)
         sc = (val >> 4) & 0xF; rc = val & 0xF
         rank = RANK_HEX_REV[rc]; suit = SUIT_REV[sc] if sc != 5 else rank
-        cards.append(Card(suit, rank, is_wild=(rank=='2'), cid=i))
+        cards.append(Card(suit, rank, is_wild=(rank==level), cid=i))
     result = sort_8laizi_with_details(cards, laizi_limit=None, fast_mode=False)
     return jsonify({
         "best_score": result["all_results"][0]["score"],
         "top5": [r["score"] for r in result["all_results"][:5]],
         "n_cards": len(cards),
         "n_wilds": sum(1 for c in cards if c.is_wild),
+        "level": level,
     })
 
 

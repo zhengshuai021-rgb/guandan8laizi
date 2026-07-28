@@ -70,7 +70,22 @@ body::before {
 /* ── Buttons ── */
 .controls {
   display:flex; justify-content:center; gap:16px; margin-bottom:28px; flex-wrap:wrap;
+  align-items:center;
 }
+.level-select {
+  display:flex; align-items:center; gap:6px;
+}
+.level-select .level-label {
+  font-size:0.85rem; color:var(--text-dim); white-space:nowrap;
+}
+.level-select select {
+  background:rgba(0,0,0,0.4); color:var(--gold-light);
+  border:1px solid var(--gold); border-radius:4px;
+  padding:8px 12px; font-size:0.9rem; cursor:pointer;
+  font-family:'Playfair Display',serif;
+}
+.level-select select:focus { outline:none; border-color:var(--gold-light); }
+.level-select select option { background:#1a1a2e; color:var(--gold-light); }
 .btn {
   font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
   padding:12px 36px; border-radius:6px; font-size:1rem; font-weight:500;
@@ -689,6 +704,25 @@ body::before {
 
   <!-- Controls -->
   <div class="controls">
+    <label class="level-select">
+      <span class="level-label">级牌</span>
+      <select id="levelSelect" onchange="onLevelChange(this.value)">
+        <option value="random">🎲 随机</option>
+        <option value="2" selected>2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+        <option value="J">J</option>
+        <option value="Q">Q</option>
+        <option value="K">K</option>
+        <option value="A">A</option>
+      </select>
+    </label>
     <button class="btn primary" id="btnDeal" onclick="doBaDeal()">🂠 发牌</button>
     <button class="btn" id="btnDealBa" onclick="openDealBaConfig()">⚙️ 发牌配置</button>
     <button class="btn" id="btnConfig" onclick="openConfig()">🎴 配牌</button>
@@ -699,6 +733,7 @@ body::before {
 
   <!-- Info bar -->
   <div class="info-bar" id="infoBar" style="display:none">
+    <span>级牌: <span class="val" id="infoLevel">2</span></span>
     <span>癞子: <span class="val" id="infoWild">0</span>/8</span>
     <span>自然牌: <span class="val" id="infoNat">0</span></span>
     <span>策略总数: <span class="val" id="infoStrats">0</span></span>
@@ -1506,8 +1541,9 @@ function cardRankLabel(c) {
 
 async function openConfig() {
   document.getElementById('configOverlay').classList.add('active');
+  resolvedLevel = resolveLevel();
   try {
-    const resp = await fetch(`api/deck?wild_mode=${currentWildMode}`);
+    const resp = await fetch(`api/deck?wild_mode=${currentWildMode}&level=${resolvedLevel}`);
     const data = await resp.json();
     deckCards = data.cards;
     playerAssign = [[],[],[],[]];
@@ -1759,7 +1795,7 @@ async function submitConfig() {
   try {
     const resp = await fetch('api/deal_custom', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ players: playerAssign, level:'2', wild_mode: currentWildMode })
+      body: JSON.stringify({ players: playerAssign, level: resolvedLevel, wild_mode: currentWildMode })
     });
     const data = await resp.json();
     if (!data.ok) {
@@ -1768,8 +1804,10 @@ async function submitConfig() {
     }
     // Success — 渲染全部4人到 ba 区域
     currentWildMode = data.wild_mode || currentWildMode;
+    if (data.level) resolvedLevel = data.level;
     currentHand = data.hand;
     document.getElementById('infoBar').style.display = 'flex';
+    document.getElementById('infoLevel').textContent = resolvedLevel;
     document.getElementById('infoWild').textContent = data.wild_count;
     document.getElementById('infoNat').textContent = data.total - data.wild_count;
     document.getElementById('infoStrats').textContent = '-';
@@ -1848,6 +1886,8 @@ let baConfig = null;        // 当前配置 (从 localStorage 加载)
 let baDealResult = null;    // 发牌结果
 let baActiveSeat = 0;       // 当前查看的座位 (0-3)
 let currentWildMode = 8;    // 当前发牌的癞子模式 (2/8)，理牌时跟随切换
+let currentLevel = '2';     // 当前级牌 ('2'~'A' 或 'random')
+let resolvedLevel = '2';    // 实际生效的级牌（random 解析后的具体值）
 
 // ── 配置加载/保存 ──
 function loadBaConfig() {
@@ -1893,6 +1933,19 @@ function openDealBaConfig() {
 
 function closeDealBaConfig() {
   document.getElementById('dealBaOverlay').classList.remove('active');
+}
+
+// ── 级牌选择 ──
+function onLevelChange(val) {
+  currentLevel = val;
+}
+
+function resolveLevel() {
+  if (currentLevel === 'random') {
+    const levels = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+    return levels[Math.floor(Math.random() * levels.length)];
+  }
+  return currentLevel;
 }
 
 // ── 模式切换：自动调整档位/机器人上限/评分权重 ──
@@ -2033,8 +2086,10 @@ async function doBaDeal() {
   if (!baConfig) loadBaConfig();
 
   // 构造请求体
+  resolvedLevel = resolveLevel();
   const tiersStr = baConfig.tiers.map(t => `${t.min}-${t.max}:${t.weight}`).join('|');
   const body = {
+    level: resolvedLevel,
     config: {
       wild_mode: baConfig.wild_mode,
       wild_tiers: tiersStr,
@@ -2073,6 +2128,7 @@ async function doBaDeal() {
 
     // 更新顶部信息栏
     document.getElementById('infoBar').style.display = 'flex';
+    document.getElementById('infoLevel').textContent = resolvedLevel;
     document.getElementById('infoWild').textContent = data.wild_counts[0];
     document.getElementById('infoNat').textContent = 27 - data.wild_counts[0];
     document.getElementById('infoStrats').textContent = '-';
