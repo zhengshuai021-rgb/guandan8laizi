@@ -1938,12 +1938,24 @@ function closeDealBaConfig() {
 // ── 级牌选择 ──
 function onLevelChange(val) {
   currentLevel = val;
+  // 切换级牌时清除已解析的随机值，下次操作时重新随机
+  if (val === 'random') {
+    resolvedLevel = null;
+  } else {
+    resolvedLevel = val;
+  }
 }
 
 function resolveLevel() {
   if (currentLevel === 'random') {
-    const levels = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
-    return levels[Math.floor(Math.random() * levels.length)];
+    if (!resolvedLevel) {
+      const levels = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+      resolvedLevel = levels[Math.floor(Math.random() * levels.length)];
+      // 更新下拉框显示已解析的级牌
+      document.getElementById('levelSelect').value = resolvedLevel;
+      currentLevel = resolvedLevel;
+    }
+    return resolvedLevel;
   }
   return currentLevel;
 }
