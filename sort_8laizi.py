@@ -848,17 +848,27 @@ class SortResult:
         #   成型奖励：炸弹 0.7/张 | 同花顺 0.5/张 | 常规牌型 0.3/张
         #
         # 【牌力调整】power 标准化到 [0, 1]，作为微调系数
-        #   power_norm = (power - 3) / (14 - 3)   # 3→0, A→1, 王取首张非癞子
+        #   power_norm = (power - 3) / (WILD_POWER - 3)   # 3→0, A→~0.92, 级牌→1.0
         #   - 单张大牌惩罚 ×(1 + power_norm×0.5)   # 大牌单张更难脱手，惩罚加重
         #   - 炸弹大牌奖励 ×(1 + power_norm×0.5)   # 大牌炸弹压制力更强，奖励加重
         #   - 调整幅度 ±50%，足够区分大小牌但不喧宾夺主
+        #
+        # 【级牌消耗惩罚】级牌(癞子牌)是高战斗力牌，消耗在成型牌型中
+        #   会削弱手牌整体牌力。对成型牌型中每张级牌加收额外惩罚。
         # ──────────────────────────────────────────────
+
+        POWER_MAX = WILD_POWER  # 级牌是最高自然牌力
 
         def _power_norm(g):
             """取牌组首张非癞子的 power，标准化到 [0, 1]"""
             p = g.first_natural_power()
-            p = max(3, min(14, p))
-            return (p - 3) / 11.0
+            p = max(3, min(POWER_MAX, p))
+            return (p - 3) / (POWER_MAX - 3.0)
+
+        def _wild_penalty(g):
+            """成型牌型中每张级牌的额外惩罚（级牌不应轻易消耗在普通牌型中）"""
+            wc = sum(1 for c in g.cards if c.is_wild)
+            return wc * 0.8
 
         frag_penalty = (
             sum(1 + _power_norm(g) * 0.5 for g in self.singles)
@@ -875,7 +885,16 @@ class SortResult:
             + sum(g.size * 0.3 for g in self.three_with_twos)
         )
 
-        frag_score = frag_penalty - form_bonus
+        # 级牌消耗惩罚：炸弹/同花顺使用级牌是值得的（高回报），不惩罚；
+        # 顺子/木板/钢板/三带二使用级牌回报低，需要惩罚
+        wild_cost = (
+            sum(_wild_penalty(g) for g in self.straights)
+            + sum(_wild_penalty(g) for g in self.boards)
+            + sum(_wild_penalty(g) for g in self.steels)
+            + sum(_wild_penalty(g) for g in self.three_with_twos)
+        )
+
+        frag_score = frag_penalty - form_bonus + wild_cost
 
         return (
             # ① 加权综合分（越小越好）
