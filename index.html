@@ -1208,7 +1208,7 @@ async function doSort() {
 
   try {
     const limit = getActiveLimit();
-    const resp = await fetch('api/sort', {
+    const resp = await fetch('api/sort?_t=' + Date.now(), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ cards: currentHand, laizi_limit: limit, wild_mode: currentWildMode })
     });

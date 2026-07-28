@@ -19,6 +19,14 @@ from deal_config import default_config, load_config_from_file, load_config_from_
 
 app = Flask(__name__, static_folder=None)
 
+# Prevent browser from caching ANY API response
+@app.after_request
+def add_no_cache_headers(resp):
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
 
 @app.route("/")
 def index():
