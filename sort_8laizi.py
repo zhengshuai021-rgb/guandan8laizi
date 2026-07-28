@@ -1089,6 +1089,9 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         result.bombs = extract_bombs(pool, wp, bomb_cap)
         result.flushes = extract_flush_straights(pool, wp,
                                                  max_wilds_for_flush=flush_cap)
+    elif strategy == "no_flush":
+        # 不做同花顺，癞子全部留给炸弹/木板/顺子
+        result.bombs = extract_bombs(pool, wp, bomb_cap)
 
     for ext_type in extraction_order:
         if ext_type == "straight":
@@ -1322,6 +1325,9 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
 
         _run_strategy_group("N_bomb_first", bw_range, EXTRACTION_ORDERS,
             lambda bw, o, b: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+
+        _run_strategy_group("no_flush", bw_range, EXTRACTION_ORDERS,
+            lambda bw, o, b: {"strategy": "no_flush", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
         orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
         _run_strategy_group("O_flush_first", bw_range, orders_no_straight,
