@@ -310,6 +310,40 @@ body::before {
 }
 .score-clickable:hover { text-decoration-color:var(--gold); }
 
+/* ── Score popup: mini playing cards ── */
+.mc-zone {
+  display:flex; flex-wrap:wrap; gap:3px; align-items:flex-end;
+  background:rgba(0,0,0,0.25); border-radius:6px; padding:8px 6px;
+  min-height:50px;
+}
+.mc-group {
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  position:relative;
+}
+.mc-group-label {
+  font-size:0.6rem; color:var(--gold); opacity:0.7;
+  white-space:nowrap;
+}
+.mc-cards { display:flex; flex-direction:column; align-items:center; }
+.mini-card-sm {
+  width:26px; height:38px; border-radius:3px; background:var(--card-bg);
+  display:flex; align-items:flex-start; justify-content:flex-start;
+  font-size:0.65rem; font-family:'Playfair Display',serif;
+  margin-top:-26px; position:relative; padding:2px; line-height:1;
+  box-shadow: 1px 1px 4px rgba(0,0,0,0.4);
+}
+.mini-card-sm:first-child { margin-top:0; }
+.mini-card-sm .mc-rank { font-weight:700; }
+.mini-card-sm .mc-suit { font-size:0.55rem; margin-left:1px; }
+.mini-card-sm.mc-red { color:var(--card-red); }
+.mini-card-sm.mc-black { color:var(--card-black); }
+.mini-card-sm.mc-wild {
+  background:linear-gradient(135deg,#2d0036,#6b1d7b); color:#ff6b9d; font-weight:700;
+}
+.mini-card-sm.mc-joker {
+  background:linear-gradient(135deg,#3d2b00,#8b6914); color:#e8a317;
+}
+
 /* ── Loading ── */
 .loading { display:none; text-align:center; padding:40px; }
 .loading.active { display:block; }
@@ -1120,34 +1154,47 @@ function showScoreDetail(result, isBest) {
   };
   const orderNames = meta.order.map(x => groupTypeName(x)).join(' → ');
 
-  const SUIT_DISP = { S:'♠', H:'♥', C:'♣', D:'♦' };
-
-  function renderCard(c) {
-    if (c.is_wild) return '<span style="color:#ffd54f">W</span>';
-    if (c.rank === 'SJ') return '<span style="color:#ccc">小王</span>';
-    if (c.rank === 'BJ') return '<span style="color:#ef9a9a">大王</span>';
-    const suit = SUIT_DISP[c.suit] || '';
-    const color = (c.suit === 'H' || c.suit === 'D') ? '#e57373' : '#90caf9';
-    return `<span style="color:${color}">${suit}${c.rank}</span>`;
+  // Render mini playing cards (same layout as main zones but scaled down)
+  function renderMiniCard(c) {
+    let inner, cls;
+    if (c.is_wild) {
+      cls = 'mc-wild';
+      inner = '癞';
+    } else if (c.rank === 'SJ' || c.rank === 'BJ') {
+      cls = 'mc-joker';
+      inner = c.rank === 'SJ' ? '小' : '大';
+    } else {
+      cls = SUIT_COLOR[c.suit] === 'red' ? 'mc-red' : 'mc-black';
+      inner = `<span class="mc-rank">${c.rank}</span><span class="mc-suit">${SUIT_SYMBOL[c.suit]||''}</span>`;
+    }
+    return `<span class="mini-card-sm ${cls}">${inner}</span>`;
   }
 
   function renderGroup(g) {
-    const cards = g.cards.map(renderCard).join(' ');
+    const cards = g.cards.map(renderMiniCard).join('');
     const badge = groupTypeBadge(g);
-    const wildCount = g.cards.filter(c => c.is_wild).length;
-    const wildTag = wildCount > 0 ? ` <span style="color:#ffd54f;font-size:0.7rem">(+${wildCount}癞)</span>` : '';
-    return `<div style="padding:3px 0;font-size:0.8rem">
-      <span style="color:var(--gold);min-width:56px;display:inline-block">${badge}</span>
-      ${cards}${wildTag}
-    </div>`;
+    return `<div class="mc-group"><div class="mc-group-label">${badge}</div><div class="mc-cards">${cards}</div></div>`;
   }
 
-  const zones = result.zones || {};
-  const bombZone = (zones.bombs || []).map(renderGroup).join('');
-  const sortRZone = (zones.sortR || []).map(renderGroup).join('');
-  const notSortZone = (zones.notsort || []).map(renderGroup).join('');
+  // Sort groups same way as renderZones
+  const order = {A:14, K:13, Q:12, J:11};
+  const rankVal = r => order[r] || parseInt(r) || 0;
+  const zonePriority = {bombs:0, notsort:1, sortR:2};
 
-  // Build formula breakdown
+  let allGroups = [];
+  ['bombs', 'notsort', 'sortR'].forEach(zn => {
+    (result.zones[zn] || []).forEach(g => allGroups.push({...g, zone: zn}));
+  });
+  allGroups.sort((a,b) => {
+    if (zonePriority[a.zone] !== zonePriority[b.zone])
+      return zonePriority[a.zone] - zonePriority[b.zone];
+    const aB = a.cards[a.cards.length-1], bB = b.cards[b.cards.length-1];
+    const av = aB.is_wild ? 0 : (aB.rank==='BJ'?16:(aB.rank==='SJ'?15:rankVal(aB.rank)));
+    const bv = bB.is_wild ? 0 : (bB.rank==='BJ'?16:(bB.rank==='SJ'?15:rankVal(bB.rank)));
+    return a.zone === 'notsort' ? bv - av : av - bv;
+  });
+
+  // Build formula
   const penItems = [];
   if (s.single > 0) penItems.push(`单张 ${s.single}×1.0`);
   if (s.pair > 0) penItems.push(`对子 ${s.pair}×${(s.pair*2*0.4).toFixed(1)}`);
@@ -1170,11 +1217,11 @@ function showScoreDetail(result, isBest) {
       &nbsp;|&nbsp; 提取顺序: <b style="color:var(--gold-light)">${orderNames}</b>
     </div>
 
-    ${bombZone ? `<h4>💣 炸弹区</h4>${bombZone}` : ''}
-    ${sortRZone ? `<h4>📐 理牌区</h4>${sortRZone}` : ''}
-    ${notSortZone ? `<h4>📋 非理牌区</h4>${notSortZone}` : ''}
+    <div class="mc-zone">
+      ${allGroups.map(renderGroup).join('')}
+    </div>
 
-    <h4>评分公式</h4>
+    <h4 style="margin-top:16px">评分公式</h4>
     <div class="score-row"><span class="label">碎片惩罚</span><span class="value neg">${penItems.length ? penItems.join(' + ') : '0'}</span></div>
     <div class="score-row"><span class="label">成型奖励</span><span class="value pos">${bonusItems.length ? bonusItems.join(' + ') : '0'}</span></div>
 
@@ -1185,8 +1232,7 @@ function showScoreDetail(result, isBest) {
 
     <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
       单张 1.0/张(大牌加重)，对子 0.4/张，三张 0.2/张。
-      炸弹 0.7/张(大牌加重)，同花顺 0.5/张，顺子/木板/钢板/三带二 0.3/张。
-      综合分越低越好。
+      炸弹 0.7/张(大牌加重)，同花顺 0.5/张，顺子/木板/钢板/三带二 0.3/张。综合分越低越好。
     </div>
 
     <button class="score-btn-close" onclick="closeScoreDetail()">关闭</button>
