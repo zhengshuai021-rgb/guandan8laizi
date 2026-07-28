@@ -812,6 +812,7 @@ body::before {
   <div class="config-modal">
     <div class="config-header">
       <h2>🎴 配牌</h2>
+      <span class="tip" id="configLevelTag" style="color:var(--gold-light);font-weight:500">级牌 <span id="configLevelVal">2</span></span>
       <span class="tip" id="modalTip">点击选牌 → 点击玩家区域放入；或拖拽</span>
       <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeConfig()">✕</button>
     </div>
@@ -1542,6 +1543,7 @@ function cardRankLabel(c) {
 async function openConfig() {
   document.getElementById('configOverlay').classList.add('active');
   resolvedLevel = resolveLevel();
+  document.getElementById('configLevelVal').textContent = resolvedLevel;
   try {
     const resp = await fetch(`api/deck?wild_mode=${currentWildMode}&level=${resolvedLevel}`);
     const data = await resp.json();
