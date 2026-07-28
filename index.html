@@ -916,12 +916,24 @@ const LIMIT_TYPES = [
 const LIMIT_MAX = 8;
 let laiziLimitConfig = {};  // 当前生效的配置
 
-const LIMIT_DEFAULTS = { flush: 2, bomb: 3, straight: 1, board: 1, steel: 1, three_two: 0 };
+const LIMIT_DEFAULTS = { flush: 999, bomb: 999, straight: 999, board: 999, steel: 999, three_two: 999 };
 
 function loadLimitConfig() {
   try {
     const saved = localStorage.getItem('laiziLimitConfig');
-    laiziLimitConfig = saved ? JSON.parse(saved) : { ...LIMIT_DEFAULTS };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // 如果检测到旧版限制值（<999），重置为新默认值
+      const hasOldLimit = Object.values(parsed).some(v => v < 999);
+      if (hasOldLimit) {
+        laiziLimitConfig = { ...LIMIT_DEFAULTS };
+        localStorage.setItem('laiziLimitConfig', JSON.stringify(laiziLimitConfig));
+      } else {
+        laiziLimitConfig = parsed;
+      }
+    } else {
+      laiziLimitConfig = { ...LIMIT_DEFAULTS };
+    }
   } catch(e) { laiziLimitConfig = { ...LIMIT_DEFAULTS }; }
 }
 
