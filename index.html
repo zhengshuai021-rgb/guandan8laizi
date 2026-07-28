@@ -1114,30 +1114,45 @@ function showScoreDetail(result, isBest) {
   const score = result.score;
   const meta = result.meta;
 
-  // Build score component labels
-  const scoreLabels = [
-    '加权综合分 (碎片惩罚 − 成型奖励)',
-    '单张数量 (越少越好)',
-    '大炸弹总张数 (5+线炸弹，越多越好)',
-    '常规牌型数 (顺子/木板/钢板/三带二，越多越好)',
-    '对子数量 (越少越好)',
-    '三张数量 (越少越好)'
-  ];
-
-  // Build the detailed formula breakdown
   const strategyLabelMap = {
     O_flush_first:'O·同花优先', N_bomb_first:'N·炸弹优先',
     O_flush_single:'O·单同花', O_flush_no_straight:'O·去顺子'
   };
   const orderNames = meta.order.map(x => groupTypeName(x)).join(' → ');
 
-  // Build formula breakdown rows
+  const SUIT_DISP = { S:'♠', H:'♥', C:'♣', D:'♦' };
+
+  function renderCard(c) {
+    if (c.is_wild) return '<span style="color:#ffd54f">W</span>';
+    if (c.rank === 'SJ') return '<span style="color:#ccc">小王</span>';
+    if (c.rank === 'BJ') return '<span style="color:#ef9a9a">大王</span>';
+    const suit = SUIT_DISP[c.suit] || '';
+    const color = (c.suit === 'H' || c.suit === 'D') ? '#e57373' : '#90caf9';
+    return `<span style="color:${color}">${suit}${c.rank}</span>`;
+  }
+
+  function renderGroup(g) {
+    const cards = g.cards.map(renderCard).join(' ');
+    const badge = groupTypeBadge(g);
+    const wildCount = g.cards.filter(c => c.is_wild).length;
+    const wildTag = wildCount > 0 ? ` <span style="color:#ffd54f;font-size:0.7rem">(+${wildCount}癞)</span>` : '';
+    return `<div style="padding:3px 0;font-size:0.8rem">
+      <span style="color:var(--gold);min-width:56px;display:inline-block">${badge}</span>
+      ${cards}${wildTag}
+    </div>`;
+  }
+
+  const zones = result.zones || {};
+  const bombZone = (zones.bombs || []).map(renderGroup).join('');
+  const sortRZone = (zones.sortR || []).map(renderGroup).join('');
+  const notSortZone = (zones.notsort || []).map(renderGroup).join('');
+
+  // Build formula breakdown
   const penItems = [];
   if (s.single > 0) penItems.push(`单张 ${s.single}×1.0`);
   if (s.pair > 0) penItems.push(`对子 ${s.pair}×${(s.pair*2*0.4).toFixed(1)}`);
   if (s.triple > 0) penItems.push(`三张 ${s.triple}×${(s.triple*3*0.2).toFixed(1)}`);
-  
-  // Form bonus items  
+
   const bonusItems = [];
   if (s.bomb > 0) bonusItems.push(`炸弹 ${s.bomb}×${(s.bomb*(s.bomb5plus||4)*0.7).toFixed(1)}`);
   if (s.flush > 0) bonusItems.push(`同花顺 ${s.flush}×${(s.flush*5*0.5).toFixed(1)}`);
@@ -1147,37 +1162,31 @@ function showScoreDetail(result, isBest) {
   if (s.three_two > 0) bonusItems.push(`三带二 ${s.three_two}×${(s.three_two*5*0.3).toFixed(1)}`);
 
   const html = `
-    <h3>${isBest ? '⭐ 最优方案' : '📊 策略方案'} 评分公式分解</h3>
-    
+    <h3>${isBest ? '⭐ 最优方案' : '📊 策略方案'} 评分明细</h3>
+
     <div style="margin-bottom:12px;font-size:0.78rem;color:var(--text-dim)">
       策略: <b style="color:var(--gold-light)">${strategyLabelMap[meta.strategy]||meta.strategy}</b>
       &nbsp;|&nbsp; 癞子炸弹: <b style="color:var(--gold-light)">${meta.bomb_wilds}</b>
       &nbsp;|&nbsp; 提取顺序: <b style="color:var(--gold-light)">${orderNames}</b>
     </div>
 
-    <h4>评分元组 (6维度，字典序越小越好)</h4>
-    ${score.map((v,i) => `
-      <div class="score-row">
-        <span class="label">${i+1}. ${scoreLabels[i]}</span>
-        <span class="value">${typeof v==='number' ? v.toFixed(v%1?2:0) : v}</span>
-      </div>
-    `).join('')}
+    ${bombZone ? `<h4>💣 炸弹区</h4>${bombZone}` : ''}
+    ${sortRZone ? `<h4>📐 理牌区</h4>${sortRZone}` : ''}
+    ${notSortZone ? `<h4>📋 非理牌区</h4>${notSortZone}` : ''}
 
-    <h4>碎片惩罚 (越小越好)</h4>
-    <div class="score-row"><span class="label">碎片惩罚项</span><span class="value neg">${penItems.length ? penItems.join(' + ') : '0'}</span></div>
-
-    <h4>成型奖励 (越大越好)</h4>
-    <div class="score-row"><span class="label">成型奖励项</span><span class="value pos">${bonusItems.length ? bonusItems.join(' + ') : '0'}</span></div>
+    <h4>评分公式</h4>
+    <div class="score-row"><span class="label">碎片惩罚</span><span class="value neg">${penItems.length ? penItems.join(' + ') : '0'}</span></div>
+    <div class="score-row"><span class="label">成型奖励</span><span class="value pos">${bonusItems.length ? bonusItems.join(' + ') : '0'}</span></div>
 
     <div class="score-total">
-      <span class="label">综合分 = 碎片惩罚 − 成型奖励</span>
+      <span class="label">综合分 = 惩罚 − 奖励</span>
       <span class="value">${score[0].toFixed(2)}</span>
     </div>
-    
+
     <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
-      说明：综合分越低越好。单张权重 1.0/张(大牌加重)，对子 0.4/张，三张 0.2/张。
+      单张 1.0/张(大牌加重)，对子 0.4/张，三张 0.2/张。
       炸弹 0.7/张(大牌加重)，同花顺 0.5/张，顺子/木板/钢板/三带二 0.3/张。
-      后5维为 tiebreaker，依次比较：单张数 → 大炸弹总张数 → 常规牌型数 → 对子数 → 三张数。
+      综合分越低越好。
     </div>
 
     <button class="score-btn-close" onclick="closeScoreDetail()">关闭</button>
