@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.pid
 *.log
+
+# Claude Code 本地配置（无需提交）
+.claude/

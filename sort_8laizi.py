@@ -844,12 +844,13 @@ class SortResult:
         # 消化效率 + 牌力加权的综合评分
         #
         # 【基础分】按张数计算消化效率
-        #   碎片惩罚：单张 1.0/张 | 对子 0.4/张 | 三张 0.2/张
+        #   碎片惩罚：单张 1.0~1.5/张 | 对子 0.4~0.8/张(小对子更重) | 三张 0.2/张
         #   成型奖励：炸弹 0.7/张 | 同花顺 0.5/张 | 常规牌型 0.3/张
         #
         # 【牌力调整】power 标准化到 [0, 1]，作为微调系数
         #   power_norm = (power - 3) / (WILD_POWER - 3)   # 3→0, A→~0.92, 级牌→1.0
         #   - 单张大牌惩罚 ×(1 + power_norm×0.5)   # 大牌单张更难脱手，惩罚加重
+        #   - 对子小牌惩罚 ×(0.8 - 0.4×power_norm) # 小对子难夺牌权，惩罚随牌值降低而加重（方向与单张相反）
         #   - 炸弹大牌奖励 ×(1 + power_norm×0.5)   # 大牌炸弹压制力更强，奖励加重
         #   - 调整幅度 ±50%，足够区分大小牌但不喧宾夺主
         #
@@ -872,7 +873,9 @@ class SortResult:
 
         frag_penalty = (
             sum(1 + _power_norm(g) * 0.5 for g in self.singles)
-            + sum(g.size * 0.4 for g in self.pairs)
+            # 对子：小对子难以夺取牌权，惩罚随牌值降低而加重（方向与单张相反）
+            #   per_card = 0.4 + (1 - power_norm) × 0.4  →  大对子≈0.4/张，小对子最高 0.8/张
+            + sum(g.size * (0.4 + (1 - _power_norm(g)) * 0.4) for g in self.pairs)
             + sum(g.size * 0.2 for g in self.triples)
         )
 
