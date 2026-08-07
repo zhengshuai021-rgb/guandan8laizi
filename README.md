@@ -244,34 +244,75 @@ EXTRACTION_ORDERS = list(itertools.permutations(
 
 ## 6. 方案优选规则（score 函数）
 
-所有候选方案按 `score` 元组排序，越小越好。核心是**加权综合评分**：
+所有候选方案按 `score` 元组排序，**越小越好**。主分是加权综合分 `frag_score`，后接 5 级 tiebreaker。
+
+### 6.1 记号
+
+对任意牌组 `g`：
 
 ```python
-def score(self) -> tuple:
-    # ① 加权碎片分（越小越好）
-    #    1 个炸弹的价值 ≈ 2.5 张牌的碎片消化量
-    frag_score = (
-        len(self.singles)           # 单张：权重 1.0
-        + len(self.pairs) * 0.5     # 对子：权重 0.5
-        + len(self.triples) * 0.3   # 三张：权重 0.3
-        - len(self.bombs) * 2.5     # 炸弹：权重 -2.5（越多越好）
-        - len(self.flushes) * 2.5   # 同花顺：权重 -2.5
-    )
-    return (
-        frag_score,
-        # 以下为 tiebreaker
-        len(self.singles),           # 单张数
-        -bomb5plus,                  # 5+线炸弹数
-        -len(self.straights),        # 顺子数
-        -len(self.steels),           # 钢板数
-        -len(self.boards),           # 木板数
-        -len(self.three_with_twos),  # 三带二数
-        -len(self.triples),          # 三张数
-        -len(self.pairs),            # 对子数
-    )
+power_norm(g)  = ( clamp(g.首张非癞子power, 3, 15) − 3 ) / 12     # ∈ [0, 1]，3→0, A→0.92, 级牌→1.0
+wild_count(g)  = g 中癞子张数
+wild_penalty(g) = wild_count(g) × 0.8
 ```
 
-**设计原理**：单纯追求"单张最少"会导致把 3 张同点牌组成三带二而非炸弹，严重削弱牌力。加权评分让"多 1 个炸弹但多 1 张单牌"的方案在接近时胜出。
+> clamp 到 [3, 15]：3 是最小牌力下限，15 = `WILD_POWER`（级牌）；分母 12 = 15 − 3。
+
+### 6.2 主分 frag_score
+
+```
+frag_score = frag_penalty − form_bonus + wild_cost
+```
+
+**① frag_penalty（碎片惩罚）**
+
+| 牌型 | 每张惩罚 | 说明 |
+|------|---------|------|
+| 单张 | `1 + power_norm×0.5` | 大牌单张更难脱手，**正向**挂钩，1.0~1.5/张 |
+| 对子 | `0.4 + (1 − power_norm)×0.4` | 小对子难夺牌权，**反向**挂钩，0.4~0.8/张 |
+| 三张 | `0.2` | 固定 |
+
+**② form_bonus（成型奖励，减项）**
+
+| 牌型 | 每张奖励 | 说明 |
+|------|---------|------|
+| 炸弹 | `0.7×(1 + power_norm×0.5)` | 大牌炸弹压制力更强，正向挂钩，1.05~1.05/张 |
+| 同花顺 | `0.5` | 固定 |
+| 顺子 / 木板 / 钢板 / 三带二 | `0.3` | 固定 |
+
+**③ wild_cost（级牌消耗惩罚，加项）**
+
+```
+wild_cost = Σ(顺子/木板/钢板/三带二 里的癞子张数) × 0.8
+```
+
+炸弹、同花顺用癞子是高回报，**不罚**；只有顺子/木板/钢板/三带二这四类低回报牌型用癞子才加收每张 0.8 的惩罚。
+
+### 6.3 完整排序键（6 元组，逐级 tiebreak）
+
+```python
+return (
+    frag_score,                              # ① 加权综合分（越小越好）
+    len(self.singles),                       # ② 单张绝对数越少越好
+    -sum(g.size for g in self.bombs          # ③ 5+线大炸总张数越多越好
+        if g.size >= 5),
+    -(len(self.straights) + len(self.boards) + len(self.steels)
+      + len(self.three_with_twos)),          # ④ 常规成型牌型组数越多越好
+    len(self.pairs),                         # ⑤ 对子数越少越好（对子是半成品）
+    len(self.triples),                       # ⑥ 三张数越少越好
+)
+```
+
+整个元组按字典序从小到大排，取最小者为最优方案。
+
+### 6.4 设计要点
+
+- **按张数而非组数计分**：成型奖励/碎片惩罚都以"张"为单位（`g.size`），消化效率优先。
+- **牌力只做 ±50% 微调**：`power_norm` 作为系数而非主项，足够区分大小牌但不喧宾夺主。线数对炸弹是**线性**贡献（每张 ×0.7），不额外奖励"大炸"——对持有者而言 3 个 4 线 ≈ 2 个 5 线，理牌目标是整齐而非单张威慑。
+- **对子方向与单张相反**：单张大牌罚更重（浪费高牌），对子小牌罚更重（小对子抢不到牌权）。
+- **级牌消耗有选择地惩罚**：只在低回报牌型里罚，引导癞子优先投入炸弹/同花顺。
+
+> 单纯追求"单张最少"会把 3 张同点牌组成三带二而非炸弹，严重削弱牌力。加权评分让"多 1 个炸弹但多 1 张单牌"的方案在接近时胜出。
 
 ---
 
