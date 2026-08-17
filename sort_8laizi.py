@@ -997,14 +997,15 @@ def get_laizi_limit(key, config=None):
 #  癞子预算分配方案生成
 # ================================================================
 
-def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, order):
+def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, order,
+                             laizi_limit=None):
     """
     用不限制 budget 的方式跑一次 execute_strategy，
     返回每种牌型实际消耗的癞子数。
     这样后续只需在 [0, actual] 范围内枚举 budget，大幅削减无用组合。
     """
     result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
-                              wild_budgets=None)  # None = 不限制
+                              wild_budgets=None, laizi_limit=laizi_limit)  # None = 不限制
 
     usage = {}
     usage["bomb"] = sum(g.wild_count for g in result.bombs)
@@ -1058,20 +1059,24 @@ def generate_wild_budgets(n_remaining, config=None, caps_override=None):
 def execute_strategy(natural_cards: list, wild_cards: list,
                      strategy: str, bomb_wilds: int,
                      extraction_order: tuple,
-                     wild_budgets: dict = None) -> SortResult:
+                     wild_budgets: dict = None,
+                     laizi_limit: dict = None) -> SortResult:
     """
     执行一种理牌策略。
-    
+
     strategy:
       "O_flush_first"  - 同花顺先于炸弹
       "O_flush_single" - 同花顺先于炸弹，但最多1个同花顺
       "N_bomb_first"   - 炸弹先于同花顺
-    
-    bomb_wilds: 给炸弹预留的癞子数量上限（可被 wild_budgets["bomb"] 进一步限制）
-    
+
+    bomb_wilds: 给炸弹预留的癞子数量上限（可被 laizi_limit["bomb"] 进一步限制）
+
     wild_budgets: 各牌型的癞子预算上限，格式：
       {"straight": N, "board": N, "steel": N, "three_two": N, "bomb": N, "flush": N}
       None 或缺省项 = 不限制（999）
+
+    laizi_limit: 人为约束各牌型癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT），
+                 其中 "bomb" 字段直接限制炸弹最多消耗的癞子数。
     """
     _reset_used(natural_cards)
     for c in wild_cards:
@@ -1086,10 +1091,10 @@ def execute_strategy(natural_cards: list, wild_cards: list,
             return wild_budgets.get(key, 999)
         return 999
 
-    # bomb_cap 只受 bomb_wilds 参数和 laizi_limit 配置约束，
+    # bomb_cap 只受 bomb_wilds 参数和 laizi_limit["bomb"] 配置约束，
     # 不受 wild_budgets["bomb"] 裁剪（因为 budget 从 remaining 分配，
     # remaining = n_lz - bomb_wilds，若直接 min 会导致 bomb_wilds 永远无法生效）
-    bomb_cap = min(bomb_wilds, get_laizi_limit("bomb", None))
+    bomb_cap = min(bomb_wilds, get_laizi_limit("bomb", laizi_limit))
     flush_cap = _budget("flush")
 
     result = SortResult()
@@ -1127,20 +1132,25 @@ def execute_strategy(natural_cards: list, wild_cards: list,
             result.three_with_twos = extract_three_with_two(pool, wp, max_wilds=_budget("three_two"))
 
     # 剩余癞子优先喂给已有炸弹扩线（4炸>5炸>...，同张数牌值大的优先）
-    _boost_best_group_with_leftover_wilds(wp, result.bombs)
+    # 受 bomb_cap 约束：炸弹总共消耗的癞子数不得超过 bomb_cap
+    bomb_wilds_used = sum(g.wild_count for g in result.bombs)
+    _boost_best_group_with_leftover_wilds(
+        wp, result.bombs, max_wilds=max(0, bomb_cap - bomb_wilds_used))
 
     result.triples, result.pairs, result.singles = extract_remaining(pool, wp)
 
     return result
 
 
-def _boost_best_group_with_leftover_wilds(wild_pool: list, bombs: list):
+def _boost_best_group_with_leftover_wilds(wild_pool: list, bombs: list,
+                                          max_wilds: int = 999):
     """
     将未使用的癞子逐张分配给已有炸弹扩线。
     优先张数最少的炸弹（4炸>5炸>6炸...），张数相同选牌值最大的。
+    max_wilds: 最多再喂多少个癞子给炸弹（受 bomb_cap 约束）。
     无炸弹时由 extract_remaining 自然按三张>对子>单张兜底。
     """
-    available = _active_wilds(wild_pool)
+    available = _active_wilds(wild_pool)[:max_wilds]
     if not available or not bombs:
         return
 
@@ -1188,7 +1198,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     def try_one(strategy, bomb_wilds, order, budgets):
         nonlocal best
         result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
-                                  wild_budgets=budgets)
+                                  wild_budgets=budgets, laizi_limit=laizi_limit)
         sig = result.score()
         if sig in seen_results:
             return
@@ -1203,7 +1213,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                 remaining = n_lz - bomb_wilds
                 for order in orders:
                     usage, _ = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
                         try_one(strategy, bomb_wilds, order, budgets)
@@ -1221,7 +1231,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
             for order in orders:
                 # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗上限
                 usage, _ = _probe_actual_wild_usage(
-                    natural_cards, wild_cards, strategy, bomb_wilds, order)
+                    natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                 # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
                 all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                 for budgets in all_budgets:
@@ -1303,7 +1313,8 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
 
     def _try_and_add(strategy, bomb_wilds, order, budgets, label_fn):
         result = execute_strategy(
-            natural_cards, wild_cards, strategy, bomb_wilds, order, wild_budgets=budgets)
+            natural_cards, wild_cards, strategy, bomb_wilds, order, wild_budgets=budgets,
+            laizi_limit=laizi_limit)
         sig = result.score()
         if sig in seen:
             return
@@ -1320,7 +1331,7 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                 remaining = n_lz - bomb_wilds
                 for order in EXTRACTION_ORDERS:
                     usage, _ = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
                         _try_and_add(strategy, bomb_wilds, order, budgets,
@@ -1333,7 +1344,7 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                 remaining = n_lz - bomb_wilds
                 for order in orders:
                     usage, _ = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
                         _try_and_add(strategy, bomb_wilds, order, budgets, label_fn)
