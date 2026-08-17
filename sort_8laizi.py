@@ -390,11 +390,11 @@ def extract_flush_straights(pool: list, wild_pool: list,
                         wilds += 1
 
             if wilds <= remaining:
-                # 优先选癞子消耗最少的同花顺，同癞子数时选低位（节省高位自然牌）
-                # 低位优先的理由：flush 评分不区分 rank，低位 flush 省下 K/Q 等高牌
-                # 值自然牌可投入炸弹（炸弹有 power_norm 加权），净收益更高
+                # 优先选癞子消耗最少的同花顺，同癞子数时选高位（组成最大的同花顺）
+                # 高位优先的理由：同花顺牌力随首张牌点提升（A 高 > 9 高），
+                # 癞子多义性下应组成牌力最强的同花顺
                 if best is None or wilds < best[1] or (
-                    wilds == best[1] and start < best[0]
+                    wilds == best[1] and start > best[0]
                 ):
                     best = (start, wilds, ace_high)
 
@@ -431,9 +431,10 @@ def extract_flush_straights(pool: list, wild_pool: list,
         remaining -= len(w)
 
         all_cards = w + taken
-        first_nat_idx = next((i for i, c in enumerate(all_cards) if not c.is_wild), 0)
-        fnp = all_cards[first_nat_idx].value
-        power = 520 + fnp + max(0, 4 - first_nat_idx)
+        # 同花顺牌力看「最高牌」（A 高 > K 高），而非首张自然牌：
+        #   普通窗口最高牌 = RANKS[start+4]；A 高窗口（10-J-Q-K-A）最高牌 = A(14)
+        high_value = 14 if ace_high else RANK_VALUE.get(RANKS[start + 4], 0)
+        power = 520 + high_value
         flushes.append(CardGroup(all_cards, "flush", power))
         if len(flushes) >= max_flushes:
             break
@@ -845,7 +846,7 @@ class SortResult:
         #
         # 【基础分】按张数计算消化效率
         #   碎片惩罚：单张 1.0~1.5/张 | 对子 0.4~0.8/张(小对子更重) | 三张 0.2/张
-        #   成型奖励：炸弹 0.7/张 | 同花顺 0.5/张 | 常规牌型 0.3/张
+        #   成型奖励：炸弹 0.7/张 | 同花顺 1.1/张 | 常规牌型 0.3/张
         #
         # 【牌力调整】power 标准化到 [0, 1]，作为微调系数
         #   power_norm = (power - 3) / (WILD_POWER - 3)   # 3→0, A→~0.92, 级牌→1.0
@@ -881,7 +882,7 @@ class SortResult:
 
         form_bonus = (
             sum(g.size * 0.7 * (1 + _power_norm(g) * 0.5) for g in self.bombs)
-            + sum(g.size * 0.5 for g in self.flushes)
+            + sum(g.size * 1.1 for g in self.flushes)
             + sum(g.size * 0.3 for g in self.straights)
             + sum(g.size * 0.3 for g in self.boards)
             + sum(g.size * 0.3 for g in self.steels)
