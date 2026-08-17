@@ -11,9 +11,10 @@
 
 算法流程：
   1. 分离癞子牌与自然牌
-  2. 5种基础策略 x 24排列 x (0~n_lz)癞子分配
+  2. 5个策略组 x 24排列 x (0~n_lz)癞子分配
+     （同花顺优先 / 单同花 / 炸弹优先 / 无同花顺 / 无顺子变体）
   3. 每种策略：王炸 -> 同花顺/炸弹 -> 顺子/木板/钢板/三带二 -> 三张/对子/单张
-  4. 按"单张最少优先"规则挑选最优方案
+  4. 按加权评分（frag_score，越小越好）挑选最优方案
   5. 返回 (bombs, others)
 """
 
@@ -250,8 +251,11 @@ def extract_bombs(pool: list, wild_pool: list,
     策略：
       Phase 0: 提取纯自然炸弹（>=4张同一rank，不消耗癞子）
       Phase 1: 用癞子补足 3张->4线, 2张->4线, 1张->4线
-      Phase 2: 已有4+张的自然炸弹 + 癞子 = 更大炸弹
-      Phase 3: 纯癞子炸弹（4个癞子=1个炸弹）
+      Phase 2: 纯癞子炸弹（4个癞子=1个炸弹）
+
+     注意：「已有 4+ 张自然炸弹 + 癞子 = 5+ 线炸弹」的扩线动作不在本函数内，
+     而是由 execute_strategy 收尾阶段的 _boost_best_group_with_leftover_wilds
+     统一完成（在顺子/木板/钢板/三带二提取之后）。
     """
     rank_cnt = rank_counts(pool)
     remaining = min(max_wilds_for_bombs, len(_active_wilds(wild_pool)))
@@ -283,23 +287,7 @@ def extract_bombs(pool: list, wild_pool: list,
                 power = cards_nat[0].power + 4 * 100
                 bombs.append(CardGroup(w + cards_nat, "bomb", power))
 
-    # Phase 2: 已有4+张的rank，每加1癞子=多1线
-    rank_cnt = rank_counts(pool)
-    for rank in sorted(rank_cnt.keys(), key=lambda r: (-rank_cnt[r], -RANK_VALUE.get(r, 0))):
-        cnt = rank_cnt[rank]
-        if cnt < 4 or remaining <= 0:
-            continue
-        add = min(remaining, cnt)
-        cards_nat = _active_naturals(pool, rank)[:cnt]
-        _mark_used(cards_nat)
-        w = _take_wilds(wild_pool, add)
-        remaining -= len(w)
-        total = cnt + len(w)
-        power = cards_nat[0].power + total * 100
-        bombs.append(CardGroup(w + cards_nat, "bomb", power))
-        rank_cnt[rank] = 0
-
-    # Phase 3: 纯癞子炸弹（4个癞子=1个炸弹）
+    # Phase 2: 纯癞子炸弹（4个癞子=1个炸弹）
     while remaining >= 4:
         w = _take_wilds(wild_pool, 4)
         remaining -= 4
@@ -957,7 +945,7 @@ EXTRACTION_ORDERS = list(itertools.permutations(
 # 4 种牌型 key（用于预算分配）
 BUDGET_TYPES = ["bomb", "flush", "straight", "board", "steel", "three_two"]
 
-# 快速路径阈值：癞子数 ≤ 此值时自动启用快速路径（跳过 probe + 预算枚举）
+# 快速路径阈值：癞子数 ≤ 此值时自动启用快速路径（去掉「无顺子」策略组，减少约 33% 调用量）
 FAST_WILD_THRESHOLD = 2
 
 
@@ -1021,8 +1009,12 @@ def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, or
 
 def generate_wild_budgets(n_remaining, config=None, caps_override=None):
     """
-    将 n_remaining 个癞子分配到 4 个牌型（straight/board/steel/three_two），
+    将 n_remaining 个癞子分配到 6 个牌型（bomb/flush/straight/board/steel/three_two），
     生成所有可能的预算组合。
+
+    注意：其中 "bomb" 预算在 execute_strategy 中不会生效——炸弹的癞子消耗
+    由 bomb_wilds 参数 + laizi_limit["bomb"] 单独控制（见 execute_strategy），
+    这里仍枚举 bomb 维度是为了与 probe 返回的 usage 结构对齐。
 
     caps_override: 各牌型的实际上限 dict，如 {"straight": 2, "board": 1, ...}
                    优先于 config。由 _probe_actual_wild_usage 计算。
@@ -1070,6 +1062,7 @@ def execute_strategy(natural_cards: list, wild_cards: list,
       "O_flush_first"  - 同花顺先于炸弹
       "O_flush_single" - 同花顺先于炸弹，但最多1个同花顺
       "N_bomb_first"   - 炸弹先于同花顺
+      "no_flush"       - 不提取同花顺，癞子全部留给炸弹/顺子/木板等
 
     bomb_wilds: 给炸弹预留的癞子数量上限（可被 laizi_limit["bomb"] 进一步限制）
 
@@ -1133,11 +1126,18 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         elif ext_type == "three_two":
             result.three_with_twos = extract_three_with_two(pool, wp, max_wilds=_budget("three_two"))
 
-    # 剩余癞子优先喂给已有炸弹扩线（4炸>5炸>...，同张数牌值大的优先）
-    # 受 bomb_cap 约束：炸弹总共消耗的癞子数不得超过 bomb_cap
+    # 剩余癞子优先用于组炸弹：先用「剩余自然牌 + 剩余癞子」组新炸弹
+    # （3张+1癞 / 2张+2癞 / 1张+3癞 / 纯癞子4张），再把残余癞子喂给已有炸弹
+    # 扩线（4炸>5炸>...，同张数牌值大的优先），最后才轮到三张/对子/单张兜底。
+    # 只受 laizi_limit["bomb"] 硬上限约束（bomb_wilds 只是主提取阶段的预留，
+    # 不限制这里对「残余癞子」的利用），这样「理完以后多的癞子」会喂给炸弹。
+    bomb_hard_cap = get_laizi_limit("bomb", laizi_limit)
+    bomb_wilds_used = sum(g.wild_count for g in result.bombs)
+    result.bombs.extend(
+        extract_bombs(pool, wp, max_wilds_for_bombs=max(0, bomb_hard_cap - bomb_wilds_used)))
     bomb_wilds_used = sum(g.wild_count for g in result.bombs)
     _boost_best_group_with_leftover_wilds(
-        wp, result.bombs, max_wilds=max(0, bomb_cap - bomb_wilds_used))
+        wp, result.bombs, max_wilds=max(0, bomb_hard_cap - bomb_wilds_used))
 
     result.triples, result.pairs, result.singles = extract_remaining(pool, wp)
 
@@ -1242,6 +1242,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     _run_group("O_flush_first", EXTRACTION_ORDERS)
     _run_group("O_flush_single", EXTRACTION_ORDERS)
     _run_group("N_bomb_first", EXTRACTION_ORDERS)
+    _run_group("no_flush", EXTRACTION_ORDERS)
     orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
     _run_group("O_flush_first", orders_no_straight)
 
@@ -1628,8 +1629,8 @@ def _potential_bombs(rank_cnt: dict, n_wilds: int) -> int:
     for rank, nat in rank_cnt.items():
         if nat + n_wilds >= 4:
             count += 1
-    # 纯癞子炸弹（4 癞子=1炸）也算
-    if n_wilds >= 4 and count == 0:
+    # 纯癞子炸弹（4 癞子=1炸）也算：癞子可复用，独立于自然牌炸弹计数
+    if n_wilds >= 4:
         count += n_wilds // 4
     return count
 
@@ -1654,6 +1655,11 @@ def _potential_flush_straights(cards: list, n_wilds: int) -> int:
             missing = sum(1 for ri in window if ri not in suit_ranks)
             if missing <= n_wilds:  # 癞子可复用，只看是否能补
                 total += 1
+
+    # 纯癞子同花顺：5 张癞子可独立组 1 个同花顺（不依赖自然牌），
+    # 癞子可复用，全局按 n_wilds // 5 计（不按花色重复计）
+    total += n_wilds // 5
+
     return total
 
 
@@ -2108,7 +2114,7 @@ def deal_ba_hong_tao(config: DealConfig = None, seed: int = None,
         ev = evaluate_hand_power(hand, config.scores)
         power_evals.append(ev)
 
-    # 补偿可能交换了牌（含癞子），wild_counts 以实际手牌为准
+    # 补偿只交换自然牌（癞子不参与交换），wild_counts 以实际手牌为准
     actual_wild_counts = [sum(1 for c in h if c.is_wild) for h in players_hands]
 
     result.players = players_hands

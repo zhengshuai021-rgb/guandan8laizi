@@ -869,7 +869,7 @@ body::before {
   <div class="config-modal" style="max-width:480px">
     <div class="config-header">
       <h2>⚙️ 癞子预算配置</h2>
-      <span class="tip">分配 8 个癞子配额给各牌型</span>
+      <span class="tip">分配癞子配额给各牌型（无总和限制）</span>
       <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeLimitConfig()">✕</button>
     </div>
     <div style="padding:24px 28px">
@@ -1087,20 +1087,15 @@ function updateLimitTotal() {
   const summary = document.getElementById('limitSummary');
 
   if (hasUnlimited) {
-    // 有不限制项，校验区域置灰
+    // 有不限制项，仅作提示，不做总和校验
     totalEl.style.opacity = '0.3';
-    hint.innerHTML = '<span style="color:var(--text-dim)">有不限制项，跳过校验</span>';
+    hint.innerHTML = '<span style="color:var(--text-dim)">含不限制项</span>';
     summary.innerHTML = '<span style="color:var(--text-dim)">含不限制项</span>';
   } else {
     totalEl.style.opacity = '1';
     totalEl.textContent = total;
-    if (total === LIMIT_MAX) {
-      hint.innerHTML = '<span style="color:#4caf50">✓ 合法</span>';
-      summary.innerHTML = '<span class="ok">✓ 配置合法</span>';
-    } else {
-      hint.innerHTML = `<span style="color:#e74c3c">需=8（差 ${LIMIT_MAX - total}）</span>`;
-      summary.innerHTML = `<span class="err">总和需=8，当前=${total}</span>`;
-    }
+    hint.innerHTML = '<span style="color:var(--text-dim)">总和仅供参考</span>';
+    summary.innerHTML = `<span class="ok">✓ 已分配 ${total} 个癞子配额</span>`;
   }
 }
 
@@ -1118,24 +1113,15 @@ function resetLimitConfig() {
 }
 
 function submitLimitConfig() {
-  let hasUnlimited = false;
-  let total = 0;
   const cfg = {};
   LIMIT_TYPES.forEach(t => {
     const cb = document.getElementById('limitUnlimited_' + t.key);
     if (cb && cb.checked) {
       cfg[t.key] = 999;
-      hasUnlimited = true;
     } else {
-      const v = parseInt(document.getElementById('limitSlider_' + t.key).value);
-      cfg[t.key] = v;
-      total += v;
+      cfg[t.key] = parseInt(document.getElementById('limitSlider_' + t.key).value);
     }
   });
-  if (!hasUnlimited && total !== LIMIT_MAX) {
-    showToast(`分配总和需=8，当前=${total}`);
-    return;
-  }
   saveLimitConfig(cfg);
   closeLimitConfig();
   showToast('癞子配置已保存');
