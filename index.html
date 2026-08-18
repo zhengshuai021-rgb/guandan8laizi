@@ -991,19 +991,11 @@ const LIMIT_DEFAULTS = { flush: 999, bomb: 999, straight: 999, board: 999, steel
 function loadLimitConfig() {
   try {
     const saved = localStorage.getItem('laiziLimitConfig');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // 如果检测到旧版限制值（<999），重置为新默认值
-      const hasOldLimit = Object.values(parsed).some(v => v < 999);
-      if (hasOldLimit) {
-        laiziLimitConfig = { ...LIMIT_DEFAULTS };
-        localStorage.setItem('laiziLimitConfig', JSON.stringify(laiziLimitConfig));
-      } else {
-        laiziLimitConfig = parsed;
-      }
-    } else {
-      laiziLimitConfig = { ...LIMIT_DEFAULTS };
-    }
+    const parsed = saved ? JSON.parse(saved) : {};
+    // 合并默认值：缺失键用默认（999=不限制），已有键保留用户自定义值。
+    // （旧版曾用「任一值<999 即整份重置」的迁移，会把用户自定义配置
+    //   一并抹掉，已移除——用户有意设定的限额不应在刷新时被清零。）
+    laiziLimitConfig = { ...LIMIT_DEFAULTS, ...parsed };
   } catch(e) { laiziLimitConfig = { ...LIMIT_DEFAULTS }; }
 }
 
@@ -1100,14 +1092,16 @@ function updateLimitTotal() {
 }
 
 function resetLimitConfig() {
+  // 重置 = 全部「不限制」(999)：勾选所有不限框、滑块置灰归零。
+  // 旧实现直接 slider.value = 999，但滑块 max=8 会被钳制为 8，
+  // 显示却是 999，提交后实际存成 8（与「不限制」语义不符）。
   LIMIT_TYPES.forEach(t => {
-    const dft = LIMIT_DEFAULTS[t.key] || 0;
     const slider = document.getElementById('limitSlider_' + t.key);
     const cb = document.getElementById('limitUnlimited_' + t.key);
     const val = document.getElementById('limitVal_' + t.key);
-    if (slider) { slider.value = dft; slider.disabled = false; }
-    if (cb) cb.checked = false;
-    if (val) { val.textContent = dft; val.classList.remove('disabled'); }
+    if (slider) { slider.value = 0; slider.disabled = true; }
+    if (cb) cb.checked = true;
+    if (val) { val.textContent = '∞'; val.classList.add('disabled'); }
   });
   updateLimitTotal();
 }
@@ -1172,7 +1166,7 @@ function showScoreDetail(result, isBest) {
 
   const strategyLabelMap = {
     O_flush_first:'O·同花优先', N_bomb_first:'N·炸弹优先',
-    O_flush_single:'O·单同花', O_flush_no_straight:'O·去顺子'
+    O_flush_single:'O·单同花'
   };
   const orderNames = meta.order.map(x => groupTypeName(x)).join(' → ');
 
@@ -1416,7 +1410,7 @@ function renderStrats(results, bestIdx) {
       if (isBest) tr.className = 'best-row';
 
       const strategyLabel = {
-        O_flush_first:'O·同花先', N_bomb_first:'N·炸弹先', O_flush_no_straight:'O·去顺子'
+        O_flush_first:'O·同花先', N_bomb_first:'N·炸弹先'
       }[r.meta.strategy] || r.meta.strategy;
 
       const statCell = (v, threshold) => {

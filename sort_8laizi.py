@@ -11,8 +11,8 @@
 
 算法流程：
   1. 分离癞子牌与自然牌
-  2. 5个策略组 x 24排列 x (0~n_lz)癞子分配
-     （同花顺优先 / 单同花 / 炸弹优先 / 无同花顺 / 无顺子变体）
+  2. 4个策略组 x 24排列 x (0~n_lz)癞子分配
+     （同花顺优先 / 单同花 / 炸弹优先 / 无同花顺）
   3. 每种策略：王炸 -> 同花顺/炸弹 -> 顺子/木板/钢板/三带二 -> 三张/对子/单张
   4. 按加权评分（frag_score，越小越好）挑选最优方案
   5. 返回 (bombs, others)
@@ -713,8 +713,11 @@ def extract_three_with_two(pool: list, wild_pool: list,
         if total_need > n_wilds:
             break
 
-        # 提取三张
-        triple_cards = _active_naturals(pool, tr)[:tcnt]
+        # 提取三张（防御上限 3 张：正常流程中 ≥4 张同 rank 已在 extract_bombs
+        # Phase 0 被提走，tcnt ≤ 3；若未来提取顺序变化导致 tcnt > 3，
+        # 这里截断到 3，多余自然牌留给后续炸弹/其他牌型，避免一个
+        # 三带二吞掉 5 张牌）
+        triple_cards = _active_naturals(pool, tr)[:min(tcnt, 3)]
         _mark_used(triple_cards)
         rank_cnt[tr] = max(0, rank_cnt[tr] - len(triple_cards))
 
@@ -942,10 +945,16 @@ EXTRACTION_ORDERS = list(itertools.permutations(
     ["straight", "board", "steel", "three_two"]
 ))
 
-# 4 种牌型 key（用于预算分配）
-BUDGET_TYPES = ["bomb", "flush", "straight", "board", "steel", "three_two"]
+# 5 种牌型 key（用于预算分配）。
+# 不含 "bomb"：炸弹的癞子消耗由 bomb_wilds 参数 + laizi_limit["bomb"] 单独控制，
+# 枚举 budget 里的 bomb 维度是死代码（execute_strategy 从不读取 wild_budgets["bomb"]），
+# 只会让组合数翻倍（实测 ~2.14x），因此移除。
+# "flush" 保留：execute_strategy 用 _budget("flush") 限制同花顺吃癞子，
+# 是「少组同花顺、把癞子留给炸弹/顺子」的真实决策维度。
+BUDGET_TYPES = ["flush", "straight", "board", "steel", "three_two"]
 
-# 快速路径阈值：癞子数 ≤ 此值时自动启用快速路径（去掉「无顺子」策略组，减少约 33% 调用量）
+# 快速路径阈值：癞子数 ≤ 此值时自动启用快速路径（去掉「无同花顺」组，
+# (策略,排列) 组合数从 4×24=96 降到 3×24=72，减少约 25%）
 FAST_WILD_THRESHOLD = 2
 
 
@@ -1009,14 +1018,13 @@ def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, or
 
 def generate_wild_budgets(n_remaining, config=None, caps_override=None):
     """
-    将 n_remaining 个癞子分配到 6 个牌型（bomb/flush/straight/board/steel/three_two），
+    将 n_remaining 个癞子分配到 5 个牌型（flush/straight/board/steel/three_two），
     生成所有可能的预算组合。
 
-    注意：其中 "bomb" 预算在 execute_strategy 中不会生效——炸弹的癞子消耗
-    由 bomb_wilds 参数 + laizi_limit["bomb"] 单独控制（见 execute_strategy），
-    这里仍枚举 bomb 维度是为了与 probe 返回的 usage 结构对齐。
+    注意：不含 "bomb"——炸弹的癞子消耗由 bomb_wilds 参数 + laizi_limit["bomb"]
+    单独控制（见 execute_strategy），budget 里的 bomb 维度不会生效，已从枚举中移除。
 
-    caps_override: 各牌型的实际上限 dict，如 {"straight": 2, "board": 1, ...}
+    caps_override: 各牌型的实际上限 dict，如 {"flush": 1, "straight": 2, ...}
                    优先于 config。由 _probe_actual_wild_usage 计算。
     config: laiziLimit 配置（人为约束上限）
     """
@@ -1067,8 +1075,9 @@ def execute_strategy(natural_cards: list, wild_cards: list,
     bomb_wilds: 给炸弹预留的癞子数量上限（可被 laizi_limit["bomb"] 进一步限制）
 
     wild_budgets: 各牌型的癞子预算上限，格式：
-      {"straight": N, "board": N, "steel": N, "three_two": N, "bomb": N, "flush": N}
+      {"flush": N, "straight": N, "board": N, "steel": N, "three_two": N}
       None 或缺省项 = 不限制（999）
+      注意：不含 "bomb"——炸弹癞子消耗由 bomb_wilds + laizi_limit["bomb"] 控制。
 
     laizi_limit: 人为约束各牌型癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT），
                  其中 "bomb" 字段直接限制炸弹最多消耗的癞子数。
@@ -1208,7 +1217,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
         if best is None or result.score() < best.score():
             best = result
 
-    # ── 快速路径：保留 probe 裁剪，但去掉去顺子策略组（减少33%调用）──
+    # ── 快速路径：保留 probe 裁剪，但去掉无同花顺组（减少约25%调用）──
     if fast_mode:
         def _run_group_fast(strategy, orders):
             for bomb_wilds in range(n_lz + 1):
@@ -1243,8 +1252,6 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     _run_group("O_flush_single", EXTRACTION_ORDERS)
     _run_group("N_bomb_first", EXTRACTION_ORDERS)
     _run_group("no_flush", EXTRACTION_ORDERS)
-    orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
-    _run_group("O_flush_first", orders_no_straight)
 
     return best
 
@@ -1324,7 +1331,7 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
         seen.add(sig)
         add_result(result, label_fn(bomb_wilds, order, budgets))
 
-    # ── 快速路径：保留 probe 裁剪，去掉去顺子策略组 ──
+    # ── 快速路径：保留 probe 裁剪，去掉无同花顺组 ──
     if fast_mode:
         FAST_STRATEGIES = [("O_flush_first", "同花顺优先"),
                            ("O_flush_single", "单同花"),
@@ -1365,10 +1372,6 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
 
         _run_strategy_group("no_flush", bw_range, EXTRACTION_ORDERS,
             lambda bw, o, b: {"strategy": "no_flush", "bomb_wilds": bw, "order": list(o), "budgets": b})
-
-        orders_no_straight = [o for o in EXTRACTION_ORDERS if o[0] != "straight"]
-        _run_strategy_group("O_flush_first", bw_range, orders_no_straight,
-            lambda bw, o, b: {"strategy": "O_flush_no_straight", "bomb_wilds": bw, "order": list(o), "budgets": b})
 
     if not all_results:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]

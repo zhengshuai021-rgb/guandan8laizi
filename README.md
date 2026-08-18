@@ -49,7 +49,7 @@ guandan8laizi/
 | 维度 | 普通掼蛋（2癞子） | 八癞子（8癞子） |
 |------|----------|--------|
 | 癞子数量 | 2 张（仅红桃级牌） | 8 张（全部 4 花色 × 2 副牌 = 8 张级牌） |
-| 理牌路径 | **快速路径**（跳过去顺子策略组，~1.1x 加速） | **完整路径**（4 策略组 × probe × 预算枚举） |
+| 理牌路径 | **快速路径**（跳过「无同花顺」组，~1.1x 加速） | **完整路径**（4 策略组 × probe × 预算枚举） |
 | 搜索空间 | ~数百种组合 | ~数千种组合 |
 | 自动切换 | `n_lz ≤ FAST_WILD_THRESHOLD(=2)` 时自动走快速路径 | 默认完整路径 |
 | 评分权重 | ScoreWild=10, ScoreSameColorLink=15 | ScoreWild=5, ScoreSameColorLink=25 |
@@ -62,18 +62,17 @@ guandan8laizi/
 ┌─ Web UI: 点击【✦ 一键理牌】按钮
 │
 ├─ POST /api/sort → web_server.py api_sort()
-│   ├─ 根据 wild_mode 决定 fast_mode (2癞子=True, 8癞子=False)
+│   ├─ fast_mode 传 None，由 sort_8laizi 按实际癞子数自动检测（≤2 → 快速）
 │   └─ sort_8laizi_with_details(hand_cards, laizi_limit, fast_mode)
 │       ├─ 分离癞子 / 自然牌
-│       ├─ fast_mode=True (2癞子):
+│       ├─ fast_mode=True (n_lz ≤ 2):
 │       │   ├─ 3 策略组 × 24排列 × probe × 预算枚举
-│       │   └─ 跳过 O_flush_no_straight 组（减少25%调用量）
-│       ├─ fast_mode=False (8癞子):
+│       │   └─ 跳过 no_flush 组（减少约25%调用量）
+│       ├─ fast_mode=False (n_lz > 2):
 │       │   ├─ O_flush_first       × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       │   ├─ O_flush_single      × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       │   ├─ N_bomb_first        × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       │   ├─ no_flush            × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       │   └─ O_flush_no_straight  × 18排列 × (0~n_lz) bomb_wilds × wild_budgets
+│       │   └─ no_flush            × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
 │       ├─ 剩余癞子优先组炸弹（先组新炸弹，再喂已有炸弹扩线）
 │       ├─ 按 score 排序，取最优
 │       └─ 三区划分 → 返回 JSON（含 cards_hex 编码）
@@ -137,16 +136,19 @@ class SortResult:
 
 ### 4.1 快速路径 vs 完整路径
 
-| | 完整路径（8癞子） | 快速路径（2癞子） |
+| | 完整路径（n_lz > 2） | 快速路径（n_lz ≤ 2） |
 |---|---|---|
-| 策略组 | 5组（flush_first + flush_single + bomb_first + no_flush + no_straight） | 3组（去掉 no_flush 和 no_straight） |
+| 策略组 | 4组（flush_first + flush_single + bomb_first + no_flush） | 3组（去掉 no_flush） |
 | probe 裁剪 | ✅ 保留 | ✅ 保留 |
 | 预算枚举 | ✅ 全量 | ✅ 全量（组合少） |
-| 质量验证 | 基准 | 92%等价 + 8%更优 + 0%更差 |
+| 质量验证 | 基准 | 实测 60 副低癞子手牌 100% 与完整路径最优一致 |
+
+> 快速路径省略 `no_flush` 组，搜索空间是完整路径的子集，理论上只可能「等价或更差」、
+> 不可能更优；实测 60 副 n_lz ≤ 2 手牌最优完全一致，说明该组在低癞子场景下几乎从不取胜。
 
 通过 `fast_mode` 参数控制，`None` 时按 `n_lz ≤ FAST_WILD_THRESHOLD(=2)` 自动检测。
 
-### 4.2 五大策略组（完整路径）
+### 4.2 四大策略组（完整路径）
 
 | 策略组 | 提取顺序 | 说明 |
 |--------|---------|------|
@@ -154,18 +156,23 @@ class SortResult:
 | **O_flush_single** | 同 O_flush_first，但同花顺最多取 1 个 | 避免同花顺贪心消耗过多自然牌 |
 | **N_bomb_first** | 王炸 → 炸弹 → 同花顺 → 24排列 → 三张/对子/单张 | 炸弹优先于同花顺 |
 | **no_flush** | 王炸 → 炸弹 → 24排列 → 三张/对子/单张 | 完全不提取同花顺，癞子全部留给炸弹/顺子等 |
-| **O_flush_no_straight** | 同 O_flush_first，但去掉"顺子"提取 | 跳过顺子项（18排列），仅完整路径使用 |
+
+> 快速路径（n_lz ≤ 2）省略 `no_flush` 组：癞子少时同花顺几乎组不起来，
+> 该组的搜索空间基本被其余三组的 `flush=0` 预算覆盖，去掉可减少约 25% 调用量。
 
 ### 4.3 癞子预算分配（wild_budgets）
 
-每种牌型（顺子/木板/钢板/三带二/炸弹/同花顺）都有一个 `max_wilds` 预算上限，控制该牌型最多消耗多少个癞子。
+每种牌型（顺子/木板/钢板/三带二/同花顺）都有一个 `max_wilds` 预算上限，控制该牌型最多消耗多少个癞子。
 
 ```python
-# 6 种牌型的癞子预算组合示例（n_remaining=3）
-{"straight": 2, "board": 1, "steel": 0, "three_two": 0, "bomb": 0, "flush": 0}
-{"straight": 0, "board": 0, "steel": 2, "three_two": 1, "bomb": 0, "flush": 0}
+# 5 种牌型的癞子预算组合示例（n_remaining=3）
+{"straight": 2, "board": 1, "steel": 0, "three_two": 0, "flush": 0}
+{"straight": 0, "board": 0, "steel": 2, "three_two": 1, "flush": 0}
 ...
 ```
+
+> `bomb` 不在枚举预算内：炸弹的癞子消耗由 `bomb_wilds` 参数 + `laizi_limit["bomb"]`
+> 单独控制（见 §4.5），枚举 budget 里的 bomb 维度是死代码，只会让组合数翻倍，已移除。
 
 通过 `generate_wild_budgets()` 函数枚举所有可能的分配方案。
 
@@ -359,8 +366,8 @@ sort_8laizi(cards, laizi_limit={"straight": 1, "three_two": 2})
 - 6 个滑块对应 6 种牌型（同花顺/炸弹/顺子/木板/钢板/三带二），每个 0~8
 - 每行右侧有 **☐ 不限制** 勾选框，勾选后该牌型不受约束（滑块置灰，值显示 ∞）
 - **无总和校验**：各牌型配额独立生效，可任意分配（总和不必等于 8）
-- 配置存入 `localStorage`，刷新页面不丢失
-- 点击 **↺ 重置默认** 全部归零（默认不分配癞子给任何牌型）
+- 配置存入 `localStorage`，刷新页面不丢失（缺失项自动补默认，用户自定义项保留）
+- 点击 **↺ 重置默认** 恢复「全部不限制」（每种牌型默认 999=不限癞子用量）
 - 理牌时配置随 `/api/sort` 提交给后端
 
 ### 7.3 预算约束的生效层级
@@ -513,9 +520,8 @@ from deal_config import default_config, load_config_from_file
 cfg = default_config()
 result = deal_ba_hong_tao(cfg, seed=42)
 
-# 2癞子模式
+# 2癞子模式（只需改 wild_mode；total_wilds 由 wild_mode 自动派生，不可赋值）
 cfg.wild_mode = 2
-cfg.total_wilds = 2
 result = deal_ba_hong_tao(cfg, seed=100)
 
 # 从 INI 文件加载
