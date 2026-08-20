@@ -831,6 +831,105 @@ class SortResult:
         self.pairs = []
         self.singles = []
 
+    def _score_parts(self, with_items: bool = False) -> tuple:
+        """评分各项数值 +（可选）逐组明细。返回 (frag_penalty, form_bonus, wild_cost, items)。
+
+        items: with_items=True 时返回 {"penalty": [...], "bonus": [...], "wild": [...]}，
+        每组一条 {"type", "label", "value"}。数值来源与 score() 完全同一处，
+        UI 直接渲染 items 即可保证「展示公式 = 实际计算」，不再需要前端按 type 重算。
+        搜索热路径调用时传 with_items=False，不造多余对象。
+
+        求和刻意保持与原始 score() 一致的「按类别各自 sum 再相加」顺序，
+        保证浮点结果逐位一致，不改变搜索去重/择优行为。
+        """
+        POWER_MAX = WILD_POWER  # 级牌是最高自然牌力
+
+        def _power_norm(g):
+            """取牌组首张非癞子的 power，标准化到 [0, 1]"""
+            p = g.first_natural_power()
+            p = max(3, min(POWER_MAX, p))
+            return (p - 3) / (POWER_MAX - 3.0)
+
+        def _main_rank(g):
+            """牌组主牌值（跳过癞子），用于展示"""
+            for c in g.cards:
+                if not c.is_wild:
+                    return c.rank
+            return g.cards[0].rank if g.cards else '?'
+
+        # ── 逐组明细（仅 with_items 时构建）──
+        if with_items:
+            penalty_items = []
+            for g in self.singles:
+                penalty_items.append({"type": "single", "label": _main_rank(g),
+                                      "value": 1 + _power_norm(g) * 0.5})
+            for g in self.pairs:
+                penalty_items.append({"type": "pair", "label": _main_rank(g),
+                                      "value": g.size * (0.4 + (1 - _power_norm(g)) * 0.4)})
+            for g in self.triples:
+                penalty_items.append({"type": "triple", "label": _main_rank(g),
+                                      "value": g.size * 0.2})
+            bonus_items = []
+            for g in self.bombs:
+                bonus_items.append({"type": "bomb", "label": f"{g.size}线({_main_rank(g)})",
+                                    "value": g.size * 1.0 + _power_norm(g) * 0.4})
+            for g in self.flushes:
+                bonus_items.append({"type": "flush", "label": "",
+                                    "value": g.size * 1.1})
+            for g in self.straights:
+                bonus_items.append({"type": "straight", "label": "",
+                                    "value": g.size * 0.3})
+            for g in self.boards:
+                bonus_items.append({"type": "board", "label": "",
+                                    "value": g.size * 0.3})
+            for g in self.steels:
+                bonus_items.append({"type": "steel", "label": "",
+                                    "value": g.size * 0.3})
+            for g in self.three_with_twos:
+                bonus_items.append({"type": "three_two", "label": "",
+                                    "value": g.size * 0.3})
+            wild_items = []
+            for g in (list(self.straights) + list(self.boards)
+                      + list(self.steels) + list(self.three_with_twos)):
+                wc = sum(1 for c in g.cards if c.is_wild)
+                if wc:
+                    wild_items.append({"type": g.group_type,
+                                       "label": f"用癞子{wc}张", "value": wc * 0.8})
+        else:
+            penalty_items = bonus_items = wild_items = None
+
+        # ── 各类别单独求和再相加（与原始 score() 浮点逐位一致）──
+        # 碎片惩罚：大牌单张更难脱手，惩罚加重 (1.0~1.5/张)；
+        #   小对子惩罚随牌值降低而加重 (0.4~0.8/张，方向与单张相反)
+        frag_penalty = (
+            sum(1 + _power_norm(g) * 0.5 for g in self.singles)
+            + sum(g.size * (0.4 + (1 - _power_norm(g)) * 0.4) for g in self.pairs)
+            + sum(g.size * 0.2 for g in self.triples)
+        )
+        # 成型奖励：炸弹线数主导（每张1.0）+牌点微调(±0.4)；同花顺1.1/张；常规牌型0.3/张
+        form_bonus = (
+            sum(g.size * 1.0 + _power_norm(g) * 0.4 for g in self.bombs)
+            + sum(g.size * 1.1 for g in self.flushes)
+            + sum(g.size * 0.3 for g in self.straights)
+            + sum(g.size * 0.3 for g in self.boards)
+            + sum(g.size * 0.3 for g in self.steels)
+            + sum(g.size * 0.3 for g in self.three_with_twos)
+        )
+        # 级牌消耗惩罚：炸弹/同花顺用癞子高回报不罚；低回报牌型每张癞子 +0.8
+        def _wild_penalty(g):
+            return sum(1 for c in g.cards if c.is_wild) * 0.8
+        wild_cost = (
+            sum(_wild_penalty(g) for g in self.straights)
+            + sum(_wild_penalty(g) for g in self.boards)
+            + sum(_wild_penalty(g) for g in self.steels)
+            + sum(_wild_penalty(g) for g in self.three_with_twos)
+        )
+
+        items = None
+        if with_items:
+            items = {"penalty": penalty_items, "bonus": bonus_items, "wild": wild_items}
+        return frag_penalty, form_bonus, wild_cost, items
+
     def score(self) -> tuple:
         # ── 评分设计原则 ──────────────────────────────────
         # 消化效率 + 牌力加权的综合评分
@@ -849,48 +948,7 @@ class SortResult:
         # 【级牌消耗惩罚】级牌(癞子牌)是高战斗力牌，消耗在成型牌型中
         #   会削弱手牌整体牌力。对成型牌型中每张级牌加收额外惩罚。
         # ──────────────────────────────────────────────
-
-        POWER_MAX = WILD_POWER  # 级牌是最高自然牌力
-
-        def _power_norm(g):
-            """取牌组首张非癞子的 power，标准化到 [0, 1]"""
-            p = g.first_natural_power()
-            p = max(3, min(POWER_MAX, p))
-            return (p - 3) / (POWER_MAX - 3.0)
-
-        def _wild_penalty(g):
-            """成型牌型中每张级牌的额外惩罚（级牌不应轻易消耗在普通牌型中）"""
-            wc = sum(1 for c in g.cards if c.is_wild)
-            return wc * 0.8
-
-        frag_penalty = (
-            sum(1 + _power_norm(g) * 0.5 for g in self.singles)
-            # 对子：小对子难以夺取牌权，惩罚随牌值降低而加重（方向与单张相反）
-            #   per_card = 0.4 + (1 - power_norm) × 0.4  →  大对子≈0.4/张，小对子最高 0.8/张
-            + sum(g.size * (0.4 + (1 - _power_norm(g)) * 0.4) for g in self.pairs)
-            + sum(g.size * 0.2 for g in self.triples)
-        )
-
-        form_bonus = (
-            # 炸弹：线数主导（每张 1.0）+ 牌点微调（±0.4）
-            #   5线(5.0~5.4) < 同花顺(5.5) < 6线(6.0~6.4)，层级干净
-            sum(g.size * 1.0 + _power_norm(g) * 0.4 for g in self.bombs)
-            + sum(g.size * 1.1 for g in self.flushes)
-            + sum(g.size * 0.3 for g in self.straights)
-            + sum(g.size * 0.3 for g in self.boards)
-            + sum(g.size * 0.3 for g in self.steels)
-            + sum(g.size * 0.3 for g in self.three_with_twos)
-        )
-
-        # 级牌消耗惩罚：炸弹/同花顺使用级牌是值得的（高回报），不惩罚；
-        # 顺子/木板/钢板/三带二使用级牌回报低，需要惩罚
-        wild_cost = (
-            sum(_wild_penalty(g) for g in self.straights)
-            + sum(_wild_penalty(g) for g in self.boards)
-            + sum(_wild_penalty(g) for g in self.steels)
-            + sum(_wild_penalty(g) for g in self.three_with_twos)
-        )
-
+        frag_penalty, form_bonus, wild_cost, _ = self._score_parts()
         frag_score = frag_penalty - form_bonus + wild_cost
 
         return (
@@ -908,6 +966,27 @@ class SortResult:
             # ⑥ 三张数越少越好
             len(self.triples),
         )
+
+    def score_breakdown(self) -> dict:
+        """评分明细（供 UI 渲染）。数值与 score() 完全一致。
+
+        逐组明细四舍五入到 0.001，各分项合计基于舍入后的值累加，
+        保证「弹窗展示的公式能精确加回 total」，不再出现展示与计算对不上的问题。
+        """
+        _, _, _, items = self._score_parts(with_items=True)
+        for section in items.values():
+            for it in section:
+                it["value"] = round(it["value"], 3)
+        frag_penalty = round(sum(it["value"] for it in items["penalty"]), 3)
+        form_bonus = round(sum(it["value"] for it in items["bonus"]), 3)
+        wild_cost = round(sum(it["value"] for it in items["wild"]), 3)
+        return {
+            "frag_penalty": frag_penalty,
+            "form_bonus": form_bonus,
+            "wild_cost": wild_cost,
+            "total": round(frag_penalty - form_bonus + wild_cost, 3),
+            "items": items,
+        }
 
     @property
     def bombs_output(self) -> list:
@@ -1312,6 +1391,7 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
             "meta": meta,
             "score": list(result.score()),
             "stats": _result_stats(result),
+            "score_breakdown": result.score_breakdown(),
             "bombs": _groups_to_dict(bombs),
             "others": _groups_to_dict(others),
             "zones": {

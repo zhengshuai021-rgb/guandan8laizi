@@ -307,6 +307,11 @@ body::before {
 .score-row .value { color:var(--gold-light); font-weight:500; font-family:'Courier New',monospace; }
 .score-row .value.pos { color:#81c784; }
 .score-row .value.neg { color:#ef9a9a; }
+.score-sec { margin-top:8px; }
+.score-sec-label { font-size:0.78rem; color:var(--text-dim); display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; border-bottom:1px dashed rgba(212,168,67,0.2); padding-bottom:2px; }
+.sec-total { font-family:'Courier New',monospace; font-weight:600; color:var(--gold-light); }
+.sec-total.pos { color:#81c784; }
+.sec-total.neg { color:#ef9a9a; }
 .score-total {
   display:flex; justify-content:space-between; padding:10px 0; margin-top:8px;
   font-size:0.9rem; font-weight:600; border-top:2px solid var(--gold);
@@ -1160,8 +1165,6 @@ function groupTypeBadge(g) {
 
 // ── 评分公式弹窗 ──
 function showScoreDetail(result, isBest) {
-  const s = result.stats;
-  const score = result.score;
   const meta = result.meta;
 
   const strategyLabelMap = {
@@ -1210,19 +1213,31 @@ function showScoreDetail(result, isBest) {
     return a.zone === 'notsort' ? bv - av : av - bv;
   });
 
-  // Build formula
-  const penItems = [];
-  if (s.single > 0) penItems.push(`单张 ${s.single}×1.0`);
-  if (s.pair > 0) penItems.push(`对子 ${s.pair}×${(s.pair*2*0.4).toFixed(1)}`);
-  if (s.triple > 0) penItems.push(`三张 ${s.triple}×${(s.triple*3*0.2).toFixed(1)}`);
+  // Build formula — 直接从后端 score_breakdown 渲染，保证展示=计算
+  const bd = result.score_breakdown;
+  if (!bd || !bd.items) { closeScoreDetail(); return; }
 
-  const bonusItems = [];
-  if (s.bomb > 0) bonusItems.push(`炸弹 ${s.bomb}×${(s.bomb*(s.bomb5plus||4)*0.7).toFixed(1)}`);
-  if (s.flush > 0) bonusItems.push(`同花顺 ${s.flush}×${(s.flush*5*0.5).toFixed(1)}`);
-  if (s.straight > 0) bonusItems.push(`顺子 ${s.straight}×${(s.straight*5*0.3).toFixed(1)}`);
-  if (s.board > 0) bonusItems.push(`木板 ${s.board}×${(s.board*6*0.3).toFixed(1)}`);
-  if (s.steel > 0) bonusItems.push(`钢板 ${s.steel}×${(s.steel*6*0.3).toFixed(1)}`);
-  if (s.three_two > 0) bonusItems.push(`三带二 ${s.three_two}×${(s.three_two*5*0.3).toFixed(1)}`);
+  const TYPE_NAMES = {
+    single:'单张', pair:'对子', triple:'三张', bomb:'炸弹', flush:'同花顺',
+    straight:'顺子', board:'木板', steel:'钢板', three_two:'三带二'
+  };
+
+  // 按牌型分组渲染一行：单张 ×3: K 1.417, 9 1.250, 5 1.083
+  function renderScoreItems(items) {
+    if (!items || !items.length) return '';
+    const byType = new Map();
+    items.forEach(it => {
+      if (!byType.has(it.type)) byType.set(it.type, []);
+      byType.get(it.type).push(it);
+    });
+    const rows = [];
+    for (const [type, its] of byType) {
+      const name = TYPE_NAMES[type] || type;
+      const detail = its.map(it => `${it.label ? it.label + ' ' : ''}${it.value.toFixed(3)}`).join(', ');
+      rows.push(`<div class="score-row"><span class="label">${name} ×${its.length}</span><span class="value">${detail}</span></div>`);
+    }
+    return rows.join('');
+  }
 
   const html = `
     <h3>${isBest ? '⭐ 最优方案' : '📊 策略方案'} 评分明细</h3>
@@ -1238,17 +1253,30 @@ function showScoreDetail(result, isBest) {
     </div>
 
     <h4 style="margin-top:16px">评分公式</h4>
-    <div class="score-row"><span class="label">碎片惩罚</span><span class="value neg">${penItems.length ? penItems.join(' + ') : '0'}</span></div>
-    <div class="score-row"><span class="label">成型奖励</span><span class="value pos">${bonusItems.length ? bonusItems.join(' + ') : '0'}</span></div>
+
+    <div class="score-sec">
+      <div class="score-sec-label">碎片惩罚 <span class="sec-total neg">${bd.frag_penalty.toFixed(3)}</span></div>
+      ${renderScoreItems(bd.items.penalty) || '<div class="score-row"><span class="value">0</span></div>'}
+    </div>
+
+    <div class="score-sec">
+      <div class="score-sec-label">成型奖励 <span class="sec-total pos">${bd.form_bonus.toFixed(3)}</span></div>
+      ${renderScoreItems(bd.items.bonus) || '<div class="score-row"><span class="value">0</span></div>'}
+    </div>
+
+    <div class="score-sec">
+      <div class="score-sec-label">级牌消耗惩罚 <span class="sec-total neg">${bd.wild_cost.toFixed(3)}</span></div>
+      ${renderScoreItems(bd.items.wild) || '<div class="score-row"><span class="value">0</span></div>'}
+    </div>
 
     <div class="score-total">
-      <span class="label">综合分 = 惩罚 − 奖励</span>
-      <span class="value">${score[0].toFixed(2)}</span>
+      <span class="label">综合分 = 惩罚 − 奖励 + 级牌消耗惩罚</span>
+      <span class="value">${bd.total.toFixed(2)}</span>
     </div>
 
     <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
-      单张 1.0/张(大牌加重)，对子 0.4/张，三张 0.2/张。
-      炸弹 0.7/张(大牌加重)，同花顺 0.5/张，顺子/木板/钢板/三带二 0.3/张。
+      单张 1.0/张(大牌加重至 1.5)，对子 0.4/张(小对子加重至 0.8)，三张 0.2/张。
+      炸弹 线数×1.0 + 牌点微调(±0.4/组)，同花顺 1.1/张，顺子/木板/钢板/三带二 0.3/张。
       级牌消耗惩罚 0.8/张(仅在顺子/木板/钢板/三带二中)。综合分越低越好。
     </div>
 
@@ -1425,7 +1453,7 @@ function renderStrats(results, bestIdx) {
         <td style="text-align:left">${strategyLabel}</td>
         <td>${r.meta.bomb_wilds}</td>
         <td style="text-align:left;font-size:0.7rem">${r.meta.order.slice(0,4).map(x=>groupTypeName(x).slice(0,2)).join('→')}</td>
-        <td><span class="score-clickable" onclick="showScoreDetail(sortResult.all_results[${i}],${i===bestIdx});event.stopPropagation()" title="点击查看评分公式">${r.score[0].toFixed(2)}</span></td>
+        <td><span class="score-clickable" onclick="showScoreDetail(sortResult.all_results[${i}],${i===bestIdx});event.stopPropagation()" title="点击查看评分公式">${(r.score_breakdown ? r.score_breakdown.total : r.score[0]).toFixed(2)}</span></td>
         <td>${statCell(s.single, [2, 6])}</td>
         <td>${s.bomb}</td><td>${s.flush}</td><td>${s.bomb5plus || 0}</td>
         <td>${s.straight}</td><td>${s.board}</td><td>${s.steel}</td>
