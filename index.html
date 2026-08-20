@@ -1163,6 +1163,16 @@ function groupTypeBadge(g) {
   return groupTypeName(g.group_type);
 }
 
+// 同花顺强制窗口的展示名，如 ["C",9,true] → "♣ 10-J-Q-K-A"
+function flushLabel(ff) {
+  if (!Array.isArray(ff)) return '';
+  const [suit, start, ace] = ff;
+  const sym = SUIT_SYMBOL[suit] || suit;
+  const rn = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  if (ace) return `${sym} 10-J-Q-K-A`;
+  return `${sym} ${rn[start]}-${rn[start+4]}`;
+}
+
 // ── 评分公式弹窗 ──
 function showScoreDetail(result, isBest) {
   const meta = result.meta;
@@ -1246,6 +1256,7 @@ function showScoreDetail(result, isBest) {
       策略: <b style="color:var(--gold-light)">${strategyLabelMap[meta.strategy]||meta.strategy}</b>
       &nbsp;|&nbsp; 癞子炸弹: <b style="color:var(--gold-light)">${meta.bomb_wilds}</b>
       &nbsp;|&nbsp; 提取顺序: <b style="color:var(--gold-light)">${orderNames}</b>
+      ${meta.flush_first ? `&nbsp;|&nbsp; 同花顺: <b style="color:var(--gold-light)">${flushLabel(meta.flush_first)}</b>` : ''}
     </div>
 
     <div class="mc-zone">

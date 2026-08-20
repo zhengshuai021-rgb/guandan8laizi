@@ -300,58 +300,89 @@ def extract_bombs(pool: list, wild_pool: list,
 #  同花顺提取（严格5张同花色连续牌）
 # ================================================================
 
+# 同花顺所有可能的 5 卡连续窗口：
+#   A,2,3,4,5  (索引 0-4)  ~  9,10,J,Q,K  (索引 8-12)  = 9 个普通窗口
+#   10,J,Q,K,A  (索引 9-13, A 视为高牌索引 13) = 1 个 A 高牌窗口
+FLUSH_WINDOWS = [(s, s + 4, False) for s in range(9)] + [(9, 13, True)]
+
+
+def _window_wilds(suit_ranks: set, start: int, ace_high: bool) -> int:
+    """计算某个同花顺窗口(起点, 是否A高)需要补多少张癞子。"""
+    if ace_high:
+        wilds = sum(1 for ri in range(start, 13) if ri not in suit_ranks)
+        if 0 not in suit_ranks:
+            wilds += 1
+        return wilds
+    return sum(1 for ri in range(start, start + 5) if ri not in suit_ranks)
+
+
+def _flush_candidates(pool: list, wild_pool: list, max_wilds_for_flush: int = 999) -> list:
+    """枚举所有可组同花顺的候选窗口：(suit, start, wilds_needed, ace_high)。
+
+    按 (癞子数, -起点) 升序——癞子最少、牌力最强优先。
+    忽略 used 标记（调用前即视为全新一局，外层搜索循环中卡片带上次
+    执行的脏 used 状态），供外层搜索枚举「用哪个同花顺」，覆盖贪心
+    选不到的花色/窗口。
+    """
+    remaining = min(max_wilds_for_flush, len(wild_pool))
+    if remaining < 0:
+        return []
+    # 不能用 suit_groups()：它按 is_natural_rank 过滤 used，而外层搜索
+    # 循环中卡片带上次执行的脏 used 状态，会全部被滤掉。
+    suit_map = defaultdict(list)
+    for c in pool:
+        if not c.is_wild and c.rank not in ("SJ", "BJ"):
+            suit_map[c.suit].append(c)
+    candidates = []
+    for suit in SUITS:
+        cards = suit_map.get(suit, [])
+        if not cards:
+            continue
+        suit_ranks = set(RANK_ORDER[c.rank] for c in cards)
+        for start, _, ace_high in FLUSH_WINDOWS:
+            wilds = _window_wilds(suit_ranks, start, ace_high)
+            if wilds <= remaining:
+                candidates.append((suit, start, wilds, ace_high))
+    candidates.sort(key=lambda x: (x[2], -x[1]))
+    return candidates
+
+
 def extract_flush_straights(pool: list, wild_pool: list,
                             max_wilds_for_flush: int = 999,
                             suit_priority: list = None,
-                            max_flushes: int = 999) -> list:
+                            max_flushes: int = 999,
+                            forced_first: tuple = None) -> list:
     """
     贪心提同花顺：严格 5 张同花色连续牌，癞子补断口。
     支持 A 作为高牌（10-J-Q-K-A）。
     max_wilds_for_flush: 最多用多少个癞子做同花顺。
     suit_priority: 花色处理顺序，None 则使用 SUITS 默认顺序。
     max_flushes: 最多创建几个同花顺。
+    forced_first: (suit, start, ace_high) 强制首个同花顺用该窗口，
+                  其余花色仍按 suit_priority 贪心。供外层搜索枚举
+                  「组哪个同花顺」——贪心固定按花色数序+癞子数选，
+                  可能吃掉本该留给顺子的关键牌（如黑桃J），漏掉更优组合。
     """
     remaining = min(max_wilds_for_flush, len(_active_wilds(wild_pool)))
     flushes = []
     suit_map = suit_groups(pool)
-
-    # 所有可能的 5 卡连续窗口：
-    #   A,2,3,4,5  (索引 0-4)  ~  9,10,J,Q,K  (索引 8-12)  = 9 个普通窗口
-    #   10,J,Q,K,A  (索引 9-13, A 视为高牌索引 13) = 1 个 A 高牌窗口
-    WINDOWS = [(s, s + 4, False) for s in range(9)] + [(9, 13, True)]
 
     if suit_priority is None:
         suit_order = SUITS
     else:
         suit_order = suit_priority
 
-    # 当 max_flushes=1 时：全局搜索最优单个同花顺（跨花色按威力+癞子数选）
-    if max_flushes == 1:
-        candidates = []  # (suit, start, wilds_needed, ace_high)
-        for suit in SUITS:
-            cards = suit_map.get(suit, [])
-            if not cards:
-                continue
-            suit_ranks = set(RANK_ORDER[c.rank] for c in cards if not c.used)
-            for start, end, ace_high in WINDOWS:
-                wilds = 0
-                if ace_high:
-                    for ri in range(start, 13):
-                        if ri not in suit_ranks:
-                            wilds += 1
-                    if 0 not in suit_ranks:
-                        wilds += 1
-                else:
-                    for ri in range(start, end + 1):
-                        if ri not in suit_ranks:
-                            wilds += 1
-                if wilds <= remaining:
-                    candidates.append((suit, start, wilds, ace_high))
+    # 首个同花顺的固定窗口：(suit, start, ace_high)，None 则全贪心
+    first_window = None
+    if forced_first is not None:
+        first_window = forced_first
+    elif max_flushes == 1:
+        # 当 max_flushes=1 时：全局搜索最优单个同花顺（跨花色按癞子数+威力选）
+        candidates = _flush_candidates(pool, wild_pool, max_wilds_for_flush)
         if candidates:
-            # 优先癞子最少、同癞子数选高位
-            candidates.sort(key=lambda x: (x[2], -x[1]))
-            best_suit, best_start, best_wilds, best_ace = candidates[0]
-            suit_order = [best_suit]
+            first_window = (candidates[0][0], candidates[0][1], candidates[0][3])
+    if first_window is not None:
+        suit_order = [first_window[0]] + [s for s in suit_order if s != first_window[0]]
 
     for suit in suit_order:
         if remaining < 0:
@@ -362,32 +393,27 @@ def extract_flush_straights(pool: list, wild_pool: list,
 
         suit_ranks = set(RANK_ORDER[c.rank] for c in cards if not c.used)
 
-        best = None  # (start_idx, wilds_needed, ace_high)
-
-        for start, end, ace_high in WINDOWS:
-            wilds = 0
-            if ace_high:
-                for ri in range(start, 13):
-                    if ri not in suit_ranks:
-                        wilds += 1
-                if 0 not in suit_ranks:
-                    wilds += 1
-            else:
-                for ri in range(start, end + 1):
-                    if ri not in suit_ranks:
-                        wilds += 1
-
-            if wilds <= remaining:
-                # 优先选癞子消耗最少的同花顺，同癞子数时选高位（组成最大的同花顺）
-                # 高位优先的理由：同花顺牌力随首张牌点提升（A 高 > 9 高），
-                # 癞子多义性下应组成牌力最强的同花顺
-                if best is None or wilds < best[1] or (
-                    wilds == best[1] and start > best[0]
-                ):
-                    best = (start, wilds, ace_high)
-
-        if best is None:
-            continue
+        if first_window is not None and suit == first_window[0]:
+            # 固定窗口：癞子不够则该 forced 选项在当前预算下不可行，跳过
+            _, start, ace_high = first_window
+            wilds_needed = _window_wilds(suit_ranks, start, ace_high)
+            if wilds_needed > remaining:
+                continue
+            best = (start, wilds_needed, ace_high)
+        else:
+            best = None  # (start_idx, wilds_needed, ace_high)
+            for start, _, ace_high in FLUSH_WINDOWS:
+                wilds = _window_wilds(suit_ranks, start, ace_high)
+                if wilds <= remaining:
+                    # 优先选癞子消耗最少的同花顺，同癞子数时选高位（组成最大的同花顺）
+                    # 高位优先的理由：同花顺牌力随首张牌点提升（A 高 > 9 高），
+                    # 癞子多义性下应组成牌力最强的同花顺
+                    if best is None or wilds < best[1] or (
+                        wilds == best[1] and start > best[0]
+                    ):
+                        best = (start, wilds, ace_high)
+            if best is None:
+                continue
 
         start, wilds_needed, ace_high = best
 
@@ -1141,7 +1167,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
                      strategy: str, bomb_wilds: int,
                      extraction_order: tuple,
                      wild_budgets: dict = None,
-                     laizi_limit: dict = None) -> SortResult:
+                     laizi_limit: dict = None,
+                     flush_first: tuple = None) -> SortResult:
     """
     执行一种理牌策略。
 
@@ -1160,6 +1187,9 @@ def execute_strategy(natural_cards: list, wild_cards: list,
 
     laizi_limit: 人为约束各牌型癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT），
                  其中 "bomb" 字段直接限制炸弹最多消耗的癞子数。
+
+    flush_first: (suit, start, ace_high) 强制首个同花顺用该窗口（None=贪心默认）。
+                 由外层搜索枚举不同同花顺方案，修复贪心选错花色的漏解。
     """
     _reset_used(natural_cards)
     for c in wild_cards:
@@ -1194,7 +1224,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
                                                  max_wilds_for_flush=min(
                                                      max(0, len(wp) - bomb_cap), flush_cap),
                                                  suit_priority=flush_suit_order,
-                                                 max_flushes=max_f)
+                                                 max_flushes=max_f,
+                                                 forced_first=flush_first)
         result.bombs = extract_bombs(pool, wp, bomb_cap)
     elif strategy == "N_bomb_first":
         result.bombs = extract_bombs(pool, wp, bomb_cap)
@@ -1267,12 +1298,45 @@ def _boost_best_group_with_leftover_wilds(wild_pool: list, bombs: list,
 #  主算法
 # ================================================================
 
+# 同花顺候选枚举上限（作为首个同花顺尝试的花色/窗口数）：
+#   快速路径(n_lz≤2)癞子少、搜索便宜，多试几个；完整路径(n_lz>2)
+#   搜索空间大，收敛到 3 个控成本。None 项恒为贪心默认方案。
+FLUSH_FIRST_CAP_FAST = 6
+FLUSH_FIRST_CAP_FULL = 3
+
+
+def _flush_first_choices(natural_cards: list, wild_cards: list, n_lz: int,
+                         strategy: str, bomb_wilds: int, budgets: dict) -> list:
+    """该 (strategy, bomb_wilds, budgets) 下要尝试的同花顺方案列表。
+
+    返回 [None, (suit, start, ace_high), ...]：None = 贪心默认，其后依次
+    尝试前若干个候选窗口。非同花顺策略恒为 [None]（不枚举）。
+    """
+    if strategy not in ("O_flush_first", "O_flush_single"):
+        return [None]
+    flush_budget = budgets.get("flush", 999) if budgets else 999
+    remaining = min(max(0, n_lz - bomb_wilds), flush_budget)
+    cands = _flush_candidates(natural_cards, wild_cards, remaining)
+    if not cands:
+        return [None]
+    cap = FLUSH_FIRST_CAP_FAST if n_lz <= FAST_WILD_THRESHOLD else FLUSH_FIRST_CAP_FULL
+    choices = [None]
+    for suit, start, _, ace in cands:
+        key = (suit, start, ace)
+        if key in choices[1:]:
+            continue
+        choices.append(key)
+        if len(choices) - 1 >= cap:
+            break
+    return choices
+
+
 def try_all_strategies(natural_cards: list, wild_cards: list,
                        laizi_limit: dict = None,
                        fast_mode: bool = None) -> SortResult:
     """
     枚举所有策略组合，返回最优。带去重和剪枝。
-    
+
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
                  None 则用全局默认配置。
     fast_mode:   None=自动检测(n_lz≤FAST_WILD_THRESHOLD时快速)，
@@ -1285,10 +1349,11 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     best = None
     seen_results = set()
 
-    def try_one(strategy, bomb_wilds, order, budgets):
+    def try_one(strategy, bomb_wilds, order, budgets, flush_first):
         nonlocal best
         result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
-                                  wild_budgets=budgets, laizi_limit=laizi_limit)
+                                  wild_budgets=budgets, laizi_limit=laizi_limit,
+                                  flush_first=flush_first)
         sig = result.score()
         if sig in seen_results:
             return
@@ -1306,7 +1371,9 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
-                        try_one(strategy, bomb_wilds, order, budgets)
+                        for flush_first in _flush_first_choices(
+                                natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
+                            try_one(strategy, bomb_wilds, order, budgets, flush_first)
 
         _run_group_fast("O_flush_first", EXTRACTION_ORDERS)
         _run_group_fast("O_flush_single", EXTRACTION_ORDERS)
@@ -1325,7 +1392,9 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                 # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
                 all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                 for budgets in all_budgets:
-                    try_one(strategy, bomb_wilds, order, budgets)
+                    for flush_first in _flush_first_choices(
+                            natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
+                        try_one(strategy, bomb_wilds, order, budgets, flush_first)
 
     _run_group("O_flush_first", EXTRACTION_ORDERS)
     _run_group("O_flush_single", EXTRACTION_ORDERS)
@@ -1401,15 +1470,15 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
             },
         })
 
-    def _try_and_add(strategy, bomb_wilds, order, budgets, label_fn):
+    def _try_and_add(strategy, bomb_wilds, order, budgets, flush_first, label_fn):
         result = execute_strategy(
             natural_cards, wild_cards, strategy, bomb_wilds, order, wild_budgets=budgets,
-            laizi_limit=laizi_limit)
+            laizi_limit=laizi_limit, flush_first=flush_first)
         sig = result.score()
         if sig in seen:
             return
         seen.add(sig)
-        add_result(result, label_fn(bomb_wilds, order, budgets))
+        add_result(result, label_fn(bomb_wilds, order, budgets, flush_first))
 
     # ── 快速路径：保留 probe 裁剪，去掉无同花顺组 ──
     if fast_mode:
@@ -1424,8 +1493,10 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
-                        _try_and_add(strategy, bomb_wilds, order, budgets,
-                            lambda bw, o, b, s=label: {"strategy": s, "bomb_wilds": bw, "order": list(o), "budgets": b})
+                        for flush_first in _flush_first_choices(
+                                natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
+                            _try_and_add(strategy, bomb_wilds, order, budgets, flush_first,
+                                lambda bw, o, b, ff, s=label: {"strategy": s, "bomb_wilds": bw, "order": list(o), "budgets": b, "flush_first": ff})
 
     # ── 完整路径：probe + 预算枚举 ──
     else:
@@ -1437,21 +1508,23 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                     all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
                     for budgets in all_budgets:
-                        _try_and_add(strategy, bomb_wilds, order, budgets, label_fn)
+                        for flush_first in _flush_first_choices(
+                                natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
+                            _try_and_add(strategy, bomb_wilds, order, budgets, flush_first, label_fn)
 
         bw_range = range(n_lz + 1)
 
         _run_strategy_group("O_flush_first", bw_range, EXTRACTION_ORDERS,
-            lambda bw, o, b: {"strategy": "O_flush_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+            lambda bw, o, b, ff: {"strategy": "O_flush_first", "bomb_wilds": bw, "order": list(o), "budgets": b, "flush_first": ff})
 
         _run_strategy_group("O_flush_single", bw_range, EXTRACTION_ORDERS,
-            lambda bw, o, b: {"strategy": "O_flush_single", "bomb_wilds": bw, "order": list(o), "budgets": b})
+            lambda bw, o, b, ff: {"strategy": "O_flush_single", "bomb_wilds": bw, "order": list(o), "budgets": b, "flush_first": ff})
 
         _run_strategy_group("N_bomb_first", bw_range, EXTRACTION_ORDERS,
-            lambda bw, o, b: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b})
+            lambda bw, o, b, ff: {"strategy": "N_bomb_first", "bomb_wilds": bw, "order": list(o), "budgets": b, "flush_first": ff})
 
         _run_strategy_group("no_flush", bw_range, EXTRACTION_ORDERS,
-            lambda bw, o, b: {"strategy": "no_flush", "bomb_wilds": bw, "order": list(o), "budgets": b})
+            lambda bw, o, b, ff: {"strategy": "no_flush", "bomb_wilds": bw, "order": list(o), "budgets": b, "flush_first": ff})
 
     if not all_results:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
