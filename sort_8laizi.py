@@ -1062,6 +1062,13 @@ BUDGET_TYPES = ["flush", "straight", "board", "steel", "three_two"]
 # (策略,排列) 组合数从 4×24=96 降到 3×24=72，减少约 25%）
 FAST_WILD_THRESHOLD = 2
 
+# 饿死修复门控：仅当癞子总数 n_lz ≤ 此值时执行 lift_types 抬升（见
+# generate_wild_budgets）。贪心同花顺吃光癞子把常规牌型饿成 0 的漏解只出现在
+# 癞子少的手牌（实测漏解均在 n_lz=3~4；5~8 癞 105 副 full-lift 与不抬升结果
+# 0 差异），而抬升在 8 癞子下会把单副预算枚举放大约 2 倍（2.1s → 4.3s），
+# 门控后 5+ 癞手牌回到基线速度。
+LIFT_ZERO_CAP_MAX_WILDS = 4
+
 
 # ================================================================
 #  癞子预算配置表（laiziLimit_config）
@@ -1107,21 +1114,28 @@ def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, or
     用不限制 budget 的方式跑一次 execute_strategy，
     返回每种牌型实际消耗的癞子数。
     这样后续只需在 [0, actual] 范围内枚举 budget，大幅削减无用组合。
+
+    注意：probe 只报告贪心单遍的实际消耗，不作任何抬升——「被贪心同花顺饿死
+    的牌型预算上限为 0」的修复在 generate_wild_budgets 的 lift_types 参数里做
+    （见该函数 docstring）。
     """
+    def _usage_of(result):
+        return {
+            "bomb": sum(g.wild_count for g in result.bombs),
+            "flush": sum(g.wild_count for g in result.flushes),
+            "straight": sum(g.wild_count for g in result.straights),
+            "board": sum(g.wild_count for g in result.boards),
+            "steel": sum(g.wild_count for g in result.steels),
+            "three_two": sum(g.wild_count for g in result.three_with_twos),
+        }
+
     result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
                               wild_budgets=None, laizi_limit=laizi_limit)  # None = 不限制
-
-    usage = {}
-    usage["bomb"] = sum(g.wild_count for g in result.bombs)
-    usage["flush"] = sum(g.wild_count for g in result.flushes)
-    usage["straight"] = sum(g.wild_count for g in result.straights)
-    usage["board"] = sum(g.wild_count for g in result.boards)
-    usage["steel"] = sum(g.wild_count for g in result.steels)
-    usage["three_two"] = sum(g.wild_count for g in result.three_with_twos)
+    usage = _usage_of(result)
     return usage, result
 
 
-def generate_wild_budgets(n_remaining, config=None, caps_override=None):
+def generate_wild_budgets(n_remaining, config=None, caps_override=None, lift_types=None):
     """
     将 n_remaining 个癞子分配到 5 个牌型（flush/straight/board/steel/three_two），
     生成所有可能的预算组合。
@@ -1132,30 +1146,68 @@ def generate_wild_budgets(n_remaining, config=None, caps_override=None):
     caps_override: 各牌型的实际上限 dict，如 {"flush": 1, "straight": 2, ...}
                    优先于 config。由 _probe_actual_wild_usage 计算。
     config: laiziLimit 配置（人为约束上限）
+    lift_types: 同花顺策略的「饿死修复」——把这些牌型中 probe 用量为 0 的上限
+        逐个抬到 1 各枚举一遍，与基础枚举取并集。
+        背景：O_flush_first 贪心会一口气组多个同花顺吃光癞子，排在提取顺序末尾的
+        牌型 probe 用量恒为 0，上限被裁成 0，于是「给它恰好 1 张癞子」的预算组合
+        （如 {flush:2, straight:1, three_two:1}）整个漏掉。逐个抬升只加一个维度，
+        预算数增幅与同时抬升 4 个上限（~2⁴ 倍）相比小得多；多枚举的等价组合由
+        结果去重兜底，最优只可能等价或更优。仅在 n_lz ≤ LIFT_ZERO_CAP_MAX_WILDS
+        时由调用方传入 lift_types（实测漏解均在 n_lz≤4；癞子充裕时抬升纯属浪费
+        且会把 8 癞子单副枚举放大约 2 倍）。用户配置 laizi_limit 仍会在枚举内部
+        做 min，配置为 0 的牌型自然抬不起来。
     """
-    results = []
+    def _enumerate(caps_override_):
+        caps = []
+        for t in BUDGET_TYPES:
+            cap = n_remaining  # 默认不限制
+            if caps_override_:
+                cap = min(cap, caps_override_.get(t, n_remaining))
+            cap_config = get_laizi_limit(t, config)
+            cap = min(cap, cap_config)
+            caps.append(cap)
 
-    caps = []
-    for t in BUDGET_TYPES:
-        cap = n_remaining  # 默认不限制
-        if caps_override:
-            cap = min(cap, caps_override.get(t, n_remaining))
-        cap_config = get_laizi_limit(t, config)
-        cap = min(cap, cap_config)
-        caps.append(cap)
+        results = []
+        def _allocate(remaining, idx, current):
+            if idx == len(BUDGET_TYPES):
+                results.append(dict(current))
+                return
+            cap = min(caps[idx], remaining)
+            t = BUDGET_TYPES[idx]
+            for w in range(cap + 1):
+                current[t] = w
+                _allocate(remaining - w, idx + 1, current)
+            current[t] = 0
 
-    def _allocate(remaining, idx, current):
-        if idx == len(BUDGET_TYPES):
-            results.append(dict(current))
-            return
-        cap = min(caps[idx], remaining)
-        t = BUDGET_TYPES[idx]
-        for w in range(cap + 1):
-            current[t] = w
-            _allocate(remaining - w, idx + 1, current)
-        current[t] = 0
+        _allocate(n_remaining, 0, {})
+        return results
 
-    _allocate(n_remaining, 0, {})
+    results = _enumerate(caps_override)
+    if not lift_types:
+        return results
+
+    seen = set()
+    for b in results:
+        seen.add(tuple(sorted(b.items())))
+    # 被饿死的牌型（probe 用量为 0）：逐个抬 1 之外，还要枚举两两组合抬 1——
+    # 实测 4 癞手牌 {flush:2, straight:1, three_two:1} 需同时抬 straight 与
+    # three_two（贪心同花顺把两者都饿成 0），单钉会漏。size≤2 已覆盖所有
+    # 含同花顺的预算（sum 约束下 3 钉预算要么超剩余、要么 flush=0 落入
+    # no_flush 策略组的覆盖范围），且每次只加一个/两个维度，成本可控。
+    pin_types = []
+    for t in lift_types:
+        if t in BUDGET_TYPES and not (caps_override and caps_override.get(t, 0) > 0):
+            pin_types.append(t)
+    for size in (1, 2):
+        for combo in itertools.combinations(pin_types, size):
+            caps2 = dict(caps_override) if caps_override else {}
+            for t in combo:
+                caps2[t] = 1
+            for b in _enumerate(caps2):
+                key = tuple(sorted(b.items()))
+                if key not in seen:
+                    seen.add(key)
+                    results.append(b)
     return results
 
 
@@ -1364,12 +1416,18 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     # ── 快速路径：保留 probe 裁剪，但去掉无同花顺组（减少约25%调用）──
     if fast_mode:
         def _run_group_fast(strategy, orders):
+            lift_types = ("straight", "board", "steel", "three_two") \
+                if strategy in ("O_flush_first", "O_flush_single") \
+                and n_lz <= LIFT_ZERO_CAP_MAX_WILDS else None
             for bomb_wilds in range(n_lz + 1):
                 remaining = n_lz - bomb_wilds
+                ff_base = _flush_first_choices(
+                    natural_cards, wild_cards, n_lz, strategy, bomb_wilds, None)
                 for order in orders:
                     usage, _ = _probe_actual_wild_usage(
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
-                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    all_budgets = generate_wild_budgets(
+                        remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:
                         for flush_first in _flush_first_choices(
                                 natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
@@ -1383,14 +1441,21 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     # ── 完整路径：probe + 预算枚举 ──
     def _run_group(strategy, orders):
         nonlocal best
+        lift_types = ("straight", "board", "steel", "three_two") \
+            if strategy in ("O_flush_first", "O_flush_single") \
+            and n_lz <= LIFT_ZERO_CAP_MAX_WILDS else None
         for bomb_wilds in range(n_lz + 1):
             remaining = n_lz - bomb_wilds
+            ff_base = _flush_first_choices(
+                natural_cards, wild_cards, n_lz, strategy, bomb_wilds, None)
             for order in orders:
-                # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗上限
+                # 先 probe 一次：跑不限 budget 的版本，拿到各牌型实际癞子消耗上限；
+                # 同花顺策略的「0 上限饿死」由 generate_wild_budgets 的 lift_types 修复
                 usage, _ = _probe_actual_wild_usage(
                     natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
                 # 只在实际消耗范围内枚举 budget（受 laizi_limit 约束）
-                all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                all_budgets = generate_wild_budgets(
+                    remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                 for budgets in all_budgets:
                     for flush_first in _flush_first_choices(
                             natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
@@ -1486,12 +1551,18 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                            ("O_flush_single", "单同花"),
                            ("N_bomb_first", "炸弹优先")]
         for strategy, label in FAST_STRATEGIES:
+            lift_types = ("straight", "board", "steel", "three_two") \
+                if strategy in ("O_flush_first", "O_flush_single") \
+                and n_lz <= LIFT_ZERO_CAP_MAX_WILDS else None
             for bomb_wilds in range(n_lz + 1):
                 remaining = n_lz - bomb_wilds
+                ff_base = _flush_first_choices(
+                    natural_cards, wild_cards, n_lz, strategy, bomb_wilds, None)
                 for order in EXTRACTION_ORDERS:
                     usage, _ = _probe_actual_wild_usage(
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
-                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    all_budgets = generate_wild_budgets(
+                        remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:
                         for flush_first in _flush_first_choices(
                                 natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):
@@ -1501,12 +1572,18 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
     # ── 完整路径：probe + 预算枚举 ──
     else:
         def _run_strategy_group(strategy, bomb_wilds_range, orders, label_fn):
+            lift_types = ("straight", "board", "steel", "three_two") \
+                if strategy in ("O_flush_first", "O_flush_single") \
+                and n_lz <= LIFT_ZERO_CAP_MAX_WILDS else None
             for bomb_wilds in bomb_wilds_range:
                 remaining = n_lz - bomb_wilds
+                ff_base = _flush_first_choices(
+                    natural_cards, wild_cards, n_lz, strategy, bomb_wilds, None)
                 for order in orders:
                     usage, _ = _probe_actual_wild_usage(
                         natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
-                    all_budgets = generate_wild_budgets(remaining, laizi_limit, caps_override=usage)
+                    all_budgets = generate_wild_budgets(
+                        remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:
                         for flush_first in _flush_first_choices(
                                 natural_cards, wild_cards, n_lz, strategy, bomb_wilds, budgets):

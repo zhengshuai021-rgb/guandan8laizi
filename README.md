@@ -66,13 +66,14 @@ guandan8laizi/
 │   └─ sort_8laizi_with_details(hand_cards, laizi_limit, fast_mode)
 │       ├─ 分离癞子 / 自然牌
 │       ├─ fast_mode=True (n_lz ≤ 2):
-│       │   ├─ 3 策略组 × 24排列 × probe × 预算枚举
-│       │   └─ 跳过 no_flush 组（减少约25%调用量）
+│       │   ├─ 3 策略组 × 24排列 × probe × 预算枚举 × flush_first(≤6)
+│       │   └─ 跳过 no_flush 组（(策略,排列)组合数减少约25%）
 │       ├─ fast_mode=False (n_lz > 2):
-│       │   ├─ O_flush_first       × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       │   ├─ O_flush_single      × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       │   ├─ N_bomb_first        × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
-│       │   └─ no_flush            × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
+│       │   ├─ O_flush_first  × 24排列 × (0~n_lz) bomb_wilds × wild_budgets × flush_first(≤3)
+│       │   ├─ O_flush_single × 24排列 × (0~n_lz) bomb_wilds × wild_budgets × flush_first(≤3)
+│       │   ├─ N_bomb_first   × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
+│       │   └─ no_flush       × 24排列 × (0~n_lz) bomb_wilds × wild_budgets
+│       │       ※ flush_first 维度仅同花顺策略枚举（O_flush_first / O_flush_single），其余恒为贪心默认
 │       ├─ 剩余癞子优先组炸弹（先组新炸弹，再喂已有炸弹扩线）
 │       ├─ 按 score 排序，取最优
 │       └─ 三区划分 → 返回 JSON（含 cards_hex 编码）
@@ -138,13 +139,15 @@ class SortResult:
 
 | | 完整路径（n_lz > 2） | 快速路径（n_lz ≤ 2） |
 |---|---|---|
-| 策略组 | 4组（flush_first + flush_single + bomb_first + no_flush） | 3组（去掉 no_flush） |
+| 策略组 | 4组（O_flush_first + O_flush_single + N_bomb_first + no_flush） | 3组（去掉 no_flush） |
 | probe 裁剪 | ✅ 保留 | ✅ 保留 |
 | 预算枚举 | ✅ 全量 | ✅ 全量（组合少） |
-| 质量验证 | 基准 | 实测 60 副低癞子手牌 100% 与完整路径最优一致 |
+| flush_first 候选 | ≤3 个窗口 | ≤6 个窗口（癞子少、搜索便宜，多试几个，见 §4.7） |
+| 质量验证 | 基准 | 实测 78 副低癞子手牌：74 副与完整路径最优一致，4 副完整路径更优（no_flush 组），快速路径从未更优 |
 
-> 快速路径省略 `no_flush` 组，搜索空间是完整路径的子集，理论上只可能「等价或更差」、
-> 不可能更优；实测 60 副 n_lz ≤ 2 手牌最优完全一致，说明该组在低癞子场景下几乎从不取胜。
+> 快速路径省略 `no_flush` 组，但同花顺策略的 `flush_first` 候选上限反而更高（6 vs 3），
+> 因此两者搜索空间互有覆盖、不是严格子集；实测低癞子场景下快速路径从未超过完整路径，
+> 少数更差解（本样本 4/78）全部来自被省略的 `no_flush` 组。
 
 通过 `fast_mode` 参数控制，`None` 时按 `n_lz ≤ FAST_WILD_THRESHOLD(=2)` 自动检测。
 
@@ -183,6 +186,22 @@ class SortResult:
 1. 对每个 `(strategy, bomb_wilds, order)` 组合，先跑一次**不限 budget** 的 probe
 2. probe 返回各牌型**实际消耗的癞子数**
 3. 后续只在 `[0, 实际消耗]` 范围内枚举 budget
+
+**饿死修复（lift_types，n_lz ≤ 4 时启用）**：probe 是贪心单遍执行，`O_flush_first`
+会一口气组多个同花顺吃光癞子，导致排在提取顺序末尾的牌型（顺子/木板/钢板/三带二）
+probe 用量恒为 0 → 上限被裁成 0 →「给它恰好 1 张癞子」的预算组合（如
+`{flush:2, straight:1, three_two:1}`）整个漏掉，漏出劣解（实测用户手牌 -12.04 →
+-12.233）。
+
+修复：`generate_wild_budgets(..., lift_types=...)` 把 probe 用量为 0 的牌型上限**逐个
+抬到 1**，再枚举**两两组合抬 1**（`size=1,2` 的幂集），与基础枚举取并集。被饿死的
+牌型往往不止一个，单钉会漏（4 癞回归用例 -12.533 → -12.825 需同时钉
+straight 与 three_two）；size≤2 已覆盖 sum 约束下所有含同花顺的预算（3 钉要么超
+剩余、要么同花顺归 0 落入 no_flush 组覆盖）。
+
+仅在 `n_lz ≤ LIFT_ZERO_CAP_MAX_WILDS(=4)` 时启用：实测漏解均在 n_lz=3~4；
+癞子充裕（5~8）时贪心同花顺不会把常规牌型饿死（105 副全量抬升与不抬升 0 差异），
+而全量抬升会把 8 癞子单副枚举放大约 2 倍（2.1s → 4.3s），故 5+ 癞手牌跳过抬升回到基线速度。
 
 ### 4.5 剩余癞子优先组炸弹
 
