@@ -1232,7 +1232,7 @@ function showScoreDetail(result, isBest) {
     straight:'顺子', board:'木板', steel:'钢板', three_two:'三带二'
   };
 
-  // 按牌型分组渲染一行：单张 ×3: K 1.417, 9 1.250, 5 1.083
+  // 按牌型分组渲染一行：单张 ×3: K 1.617, 9 1.450, 5 1.283
   function renderScoreItems(items) {
     if (!items || !items.length) return '';
     const byType = new Map();
@@ -1286,7 +1286,7 @@ function showScoreDetail(result, isBest) {
     </div>
 
     <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
-      单张 1.0/张(大牌加重至 1.5)，对子 0.4/张(小对子加重至 0.8)，三张 0.2/张。
+      单张 1.2/张(大牌加重至 1.7)，对子 0.4/张(小对子加重至 0.8)，三张 0.2/张。
       炸弹 线数×1.0 + 牌点微调(±0.4/组)，同花顺 1.1/张，顺子/木板/钢板/三带二 0.3/张。
       级牌消耗惩罚 0.8/张(仅在顺子/木板/钢板/三带二中)。综合分越低越好。
     </div>
