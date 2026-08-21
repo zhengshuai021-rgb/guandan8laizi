@@ -888,7 +888,7 @@ class SortResult:
             penalty_items = []
             for g in self.singles:
                 penalty_items.append({"type": "single", "label": _main_rank(g),
-                                      "value": 1 + _power_norm(g) * 0.5})
+                                      "value": 1.2 + _power_norm(g) * 0.5})
             for g in self.pairs:
                 penalty_items.append({"type": "pair", "label": _main_rank(g),
                                       "value": g.size * (0.4 + (1 - _power_norm(g)) * 0.4)})
