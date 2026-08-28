@@ -497,42 +497,58 @@ body::before {
 .config-modal .config-footer .summary .err { color:#e74c3c; }
 .config-modal .config-footer .summary .ok { color:#4caf50; }
 
-/* ── 癞子配置滑块 ── */
+/* ── 癞子预算配置（三态：不限/禁用/最多N）── */
 .limit-row {
-  display:flex; align-items:center; gap:14px;
-  padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.limit-row:last-child { border-bottom: none; }
+.limit-row .row-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
 }
 .limit-row .label {
-  width:100px; font-size:0.9rem; color:var(--gold-light); flex-shrink:0;
+  font-size: 0.9rem; color: var(--gold-light); flex-shrink: 0;
+  display: flex; align-items: center; gap: 7px; white-space: nowrap;
 }
-.limit-row input[type=range] {
-  flex:1; height:6px; -webkit-appearance:none; appearance:none;
-  background:rgba(255,255,255,0.1); border-radius:3px; outline:none;
+.limit-row .label .icon { font-size: 1.0rem; }
+/* 三态分段控件 */
+.limit-row .seg {
+  display: inline-flex; gap: 5px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(212,168,67,0.25);
+  border-radius: 8px; padding: 3px;
 }
-.limit-row input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
-  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+.limit-row .seg button {
+  font-family: inherit;
+  font-size: 0.78rem; padding: 5px 12px;
+  background: transparent; color: var(--text-dim);
+  border: none; border-radius: 6px; cursor: pointer;
+  transition: all 0.18s ease; white-space: nowrap;
 }
-.limit-row input[type=range]::-moz-range-thumb {
-  width:18px; height:18px; border-radius:50%;
-  background:var(--gold); cursor:pointer; border:2px solid var(--gold-light);
+.limit-row .seg button:hover { color: var(--gold-light); }
+.limit-row .seg button.active { background: linear-gradient(135deg, #c8942d, #a07618); color: #1a1a0a; font-weight: 700; }
+.limit-row .seg button.active[data-state="off"] { background: linear-gradient(135deg, #b03a2e, #8e2a20); }
+.limit-row .seg button.active[data-state="max"] { background: linear-gradient(135deg, #2a7a4d, #1e5c39); color: #eafff2; }
+/* 最多N 步进器 */
+.limit-row .stepper {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin: 10px 0 2px;
 }
-.limit-row input[type=range]:disabled {
-  opacity:0.3; cursor:not-allowed;
+.limit-row .stepper.hidden { display: none; }
+.limit-row .stepper button {
+  width: 26px; height: 26px;
+  font-size: 1rem; line-height: 1;
+  background: rgba(0,0,0,0.35); color: var(--gold-light);
+  border: 1px solid rgba(212,168,67,0.4); border-radius: 6px;
+  cursor: pointer; transition: background 0.15s;
 }
-.limit-row input[type=range]:disabled::-webkit-slider-thumb {
-  cursor:not-allowed;
+.limit-row .stepper button:hover { background: rgba(212,168,67,0.2); }
+.limit-row .stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+.limit-row .stepper .n {
+  min-width: 32px; text-align: center;
+  font-size: 0.95rem; font-weight: 700; color: var(--gold-light);
+  font-family: 'Courier New', monospace;
 }
-.limit-row .val {
-  width:36px; text-align:center; font-size:1.1rem; font-weight:700;
-  color:var(--gold-light); flex-shrink:0;
-}
-.limit-row .val.disabled { opacity:0.3; }
-.limit-row .unlimited-check {
-  display:flex; align-items:center; gap:5px; width:90px; flex-shrink:0;
-  font-size:0.75rem; color:var(--text-dim); cursor:pointer; user-select:none;
-}
-.limit-row .unlimited-check input { cursor:pointer; }
 
 /* ── 八红桃发牌 UI ── */
 .ba-section-label {
@@ -874,21 +890,14 @@ body::before {
   <div class="config-modal" style="max-width:480px">
     <div class="config-header">
       <h2>⚙️ 癞子预算配置</h2>
-      <span class="tip">分配癞子配额给各牌型（无总和限制）</span>
+      <span class="tip">限制每种牌型最多能用几张癞子。设得越严，理牌时越会把癞子省给其它牌型。全部不限制 = 引擎自由发挥。</span>
       <button class="btn danger" style="padding:4px 14px;font-size:0.75rem" onclick="closeLimitConfig()">✕</button>
     </div>
     <div style="padding:24px 28px">
       <div id="limitRows"></div>
-      <div style="margin-top:20px;padding:12px 16px;border-radius:8px;background:rgba(0,0,0,0.25);text-align:center">
-        <span style="font-size:0.85rem;color:var(--text-dim)">已分配：</span>
-        <span id="limitTotal" style="font-size:1.4rem;font-weight:700;color:var(--gold-light)">0</span>
-        <span style="font-size:0.85rem;color:var(--text-dim)">/ 8</span>
-        <span id="limitHint" style="margin-left:12px;font-size:0.8rem"></span>
-      </div>
     </div>
     <div class="config-footer">
-      <div class="summary" id="limitSummary"></div>
-      <div style="display:flex;gap:10px">
+      <div style="display:flex;gap:10px;margin-left:auto">
         <button class="btn" style="padding:8px 18px;font-size:0.85rem" onclick="resetLimitConfig()">↺ 重置默认</button>
         <button class="btn primary" style="padding:8px 24px;font-size:0.85rem" onclick="submitLimitConfig()">✓ 确认</button>
         <button class="btn danger" style="padding:8px 18px;font-size:0.85rem" onclick="closeLimitConfig()">取消</button>
@@ -1001,6 +1010,13 @@ function loadLimitConfig() {
     // （旧版曾用「任一值<999 即整份重置」的迁移，会把用户自定义配置
     //   一并抹掉，已移除——用户有意设定的限额不应在刷新时被清零。）
     laiziLimitConfig = { ...LIMIT_DEFAULTS, ...parsed };
+    // 钳制脏数据：0/999 原样保留，其余数值钳到 [1, LIMIT_MAX]，防御历史脏数据
+    LIMIT_TYPES.forEach(t => {
+      const v = laiziLimitConfig[t.key];
+      if (v === 0 || v === 999) return;
+      if (typeof v === 'number') laiziLimitConfig[t.key] = Math.min(LIMIT_MAX, Math.max(1, Math.round(v)));
+      else laiziLimitConfig[t.key] = 999;
+    });
   } catch(e) { laiziLimitConfig = { ...LIMIT_DEFAULTS }; }
 }
 
@@ -1027,99 +1043,87 @@ function renderLimitRows() {
   const container = document.getElementById('limitRows');
   container.innerHTML = '';
   LIMIT_TYPES.forEach(t => {
-    const saved = laiziLimitConfig[t.key];
-    const isUnlimited = (saved === undefined || saved === 999);
-    const curVal = isUnlimited ? 0 : saved;
+    const val = laiziLimitConfig[t.key];
     const row = document.createElement('div');
     row.className = 'limit-row';
+    row.dataset.key = t.key;
     row.innerHTML = `
-      <span class="label">${t.icon} ${t.name}</span>
-      <input type="range" min="0" max="${LIMIT_MAX}" value="${curVal}"
-             id="limitSlider_${t.key}" oninput="updateLimitTotal()"
-             ${isUnlimited ? 'disabled' : ''}>
-      <span class="val ${isUnlimited ? 'disabled' : ''}" id="limitVal_${t.key}">${isUnlimited ? '∞' : curVal}</span>
-      <label class="unlimited-check">
-        <input type="checkbox" id="limitUnlimited_${t.key}"
-               ${isUnlimited ? 'checked' : ''}
-               onchange="onUnlimitedToggle('${t.key}')">
-        不限制
-      </label>`;
+      <div class="row-head">
+        <span class="label"><span class="icon">${t.icon}</span>${t.name}</span>
+        <span class="seg">
+          <button data-state="free" onclick="setLimitState('${t.key}','free')">不限</button>
+          <button data-state="off"  onclick="setLimitState('${t.key}','off')">禁用</button>
+          <button data-state="max"  onclick="setLimitState('${t.key}','max')">最多</button>
+        </span>
+      </div>
+      <div class="stepper hidden" id="stepper_${t.key}">
+        <button onclick="stepLimit('${t.key}',-1)">−</button>
+        <span class="n" id="n_${t.key}">1</span>
+        <button onclick="stepLimit('${t.key}',+1)">+</button>
+        <span style="font-size:0.78rem;color:var(--text-dim);margin-left:4px">张</span>
+      </div>`;
     container.appendChild(row);
+    syncLimitRow(t.key);
   });
-  updateLimitTotal();
 }
 
-function onUnlimitedToggle(key) {
-  const cb = document.getElementById('limitUnlimited_' + key);
-  const slider = document.getElementById('limitSlider_' + key);
-  const val = document.getElementById('limitVal_' + key);
-  if (cb.checked) {
-    slider.disabled = true;
-    val.classList.add('disabled');
-    val.textContent = '∞';
+// 同步某行的控件显示（跟随 laiziLimitConfig[key]：999=不限 | 0=禁用 | 1~8=最多N）
+function syncLimitRow(key) {
+  const val = laiziLimitConfig[key];
+  const row = document.querySelector(`.limit-row[data-key="${key}"]`);
+  if (!row) return;
+
+  const free = row.querySelector('[data-state="free"]');
+  const off  = row.querySelector('[data-state="off"]');
+  const max  = row.querySelector('[data-state="max"]');
+  const stepper = document.getElementById('stepper_' + key);
+  const nEl = document.getElementById('n_' + key);
+
+  free.classList.toggle('active', val === 999);
+  off.classList.toggle('active', val === 0);
+  max.classList.toggle('active', val >= 1 && val <= LIMIT_MAX);
+
+  if (val >= 1 && val <= LIMIT_MAX) {
+    stepper.classList.remove('hidden');
+    nEl.textContent = val;
+    const btns = stepper.querySelectorAll('button');
+    btns[0].disabled = (val <= 1);
+    btns[1].disabled = (val >= LIMIT_MAX);
   } else {
-    slider.disabled = false;
-    val.classList.remove('disabled');
-    val.textContent = slider.value;
+    stepper.classList.add('hidden');
   }
-  updateLimitTotal();
 }
 
-function updateLimitTotal() {
-  let total = 0;
-  let hasUnlimited = false;
-  LIMIT_TYPES.forEach(t => {
-    const cb = document.getElementById('limitUnlimited_' + t.key);
-    if (cb && cb.checked) {
-      hasUnlimited = true;
-    } else {
-      const v = parseInt(document.getElementById('limitSlider_' + t.key).value);
-      document.getElementById('limitVal_' + t.key).textContent = v;
-      total += v;
-    }
-  });
-
-  const totalEl = document.getElementById('limitTotal');
-  const hint = document.getElementById('limitHint');
-  const summary = document.getElementById('limitSummary');
-
-  if (hasUnlimited) {
-    // 有不限制项，仅作提示，不做总和校验
-    totalEl.style.opacity = '0.3';
-    hint.innerHTML = '<span style="color:var(--text-dim)">含不限制项</span>';
-    summary.innerHTML = '<span style="color:var(--text-dim)">含不限制项</span>';
-  } else {
-    totalEl.style.opacity = '1';
-    totalEl.textContent = total;
-    hint.innerHTML = '<span style="color:var(--text-dim)">总和仅供参考</span>';
-    summary.innerHTML = `<span class="ok">✓ 已分配 ${total} 个癞子配额</span>`;
+function setLimitState(key, mode) {
+  if (mode === 'free') laiziLimitConfig[key] = 999;
+  else if (mode === 'off') laiziLimitConfig[key] = 0;
+  else {
+    // 切到「最多」：已在 1~8 则保持，否则默认 1
+    const cur = laiziLimitConfig[key];
+    laiziLimitConfig[key] = (cur >= 1 && cur <= LIMIT_MAX) ? cur : 1;
   }
+  syncLimitRow(key);
+}
+
+function stepLimit(key, delta) {
+  const cur = (typeof laiziLimitConfig[key] === 'number' && laiziLimitConfig[key] >= 1) ? laiziLimitConfig[key] : 1;
+  laiziLimitConfig[key] = Math.min(LIMIT_MAX, Math.max(1, cur + delta));
+  syncLimitRow(key);
 }
 
 function resetLimitConfig() {
-  // 重置 = 全部「不限制」(999)：勾选所有不限框、滑块置灰归零。
-  // 旧实现直接 slider.value = 999，但滑块 max=8 会被钳制为 8，
-  // 显示却是 999，提交后实际存成 8（与「不限制」语义不符）。
-  LIMIT_TYPES.forEach(t => {
-    const slider = document.getElementById('limitSlider_' + t.key);
-    const cb = document.getElementById('limitUnlimited_' + t.key);
-    const val = document.getElementById('limitVal_' + t.key);
-    if (slider) { slider.value = 0; slider.disabled = true; }
-    if (cb) cb.checked = true;
-    if (val) { val.textContent = '∞'; val.classList.add('disabled'); }
-  });
-  updateLimitTotal();
+  // 重置 = 全部「不限制」(999)，并清掉已保存配置，保持「重置=真的默认」
+  laiziLimitConfig = { ...LIMIT_DEFAULTS };
+  try { localStorage.removeItem('laiziLimitConfig'); } catch(e) {}
+  LIMIT_TYPES.forEach(t => syncLimitRow(t.key));
+  showToast('↺ 已恢复默认（全部不限制）');
 }
 
 function submitLimitConfig() {
   const cfg = {};
   LIMIT_TYPES.forEach(t => {
-    const cb = document.getElementById('limitUnlimited_' + t.key);
-    if (cb && cb.checked) {
-      cfg[t.key] = 999;
-    } else {
-      cfg[t.key] = parseInt(document.getElementById('limitSlider_' + t.key).value);
-    }
+    // 直接取当前 state：999=不限 | 0=禁用 | 1~8=最多N
+    cfg[t.key] = laiziLimitConfig[t.key];
   });
   saveLimitConfig(cfg);
   closeLimitConfig();
