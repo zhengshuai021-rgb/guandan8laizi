@@ -715,10 +715,13 @@ def extract_steel_plates(pool: list, wild_pool: list, max_wilds: int = 999) -> l
 # ================================================================
 
 def extract_three_with_two(pool: list, wild_pool: list,
-                           max_pair_value: int = 11,
-                           max_wilds: int = 999) -> list:
-    """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过J）。
-    max_wilds: 最多用多少个癞子做三带二。"""
+                           max_pair_value: int = 14,
+                           max_wilds: int = 999,
+                           level: str = None) -> list:
+    """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过A）。
+    max_wilds: 最多用多少个癞子做三带二。
+    level: 级牌 rank（如 '3'）；有值时对子选择优先避开级牌 rank——
+          自然级牌高牌力（power=15），尽量不消耗在低回报的三带二对子里。"""
     twt_list = []
     rank_cnt = rank_counts(pool)
     wilds_used = 0
@@ -737,13 +740,17 @@ def extract_three_with_two(pool: list, wild_pool: list,
         need_triple = max(0, 3 - tcnt)
 
         # 找可用的对子rank（排除三张rank自身，除非cnt>3）
-        # 优先选恰好2张的rank（不浪费），再从小牌开始带（小对子先用）
+        # 优先选恰好2张的rank（不浪费），再从小牌开始带（小对子先用）；
+        # level 已知时额外优先避开级牌 rank——自然级牌是最高自然牌力，
+        # 优先带非级牌对子（如 A），把级牌留着组大牌型/炸弹。
         pair_candidates = sorted(
             [(r, c) for r, c in rank_cnt.items()
              if c + n_wilds >= 2 and c > 0
              and RANK_VALUE.get(r, 0) <= max_pair_value
              and (r != tr or c > 3)],
-            key=lambda x: (0 if x[1] == 2 else 1, -x[1], RANK_VALUE.get(x[0], 0))
+            key=lambda x: (0 if x[1] == 2 else 1, -x[1],
+                           x[0] == str(level) if level else False,
+                           RANK_VALUE.get(x[0], 0))
         )
         if not pair_candidates:
             break
@@ -859,9 +866,11 @@ def extract_remaining(pool: list, wild_pool: list) -> tuple:
 
 class SortResult:
     __slots__ = ('kings', 'flushes', 'bombs', 'straights', 'boards',
-                 'steels', 'three_with_twos', 'triples', 'pairs', 'singles')
+                 'steels', 'three_with_twos', 'triples', 'pairs', 'singles',
+                 'level')
 
     def __init__(self):
+        self.level = None  # 级牌 rank 字符串；None = 只按癞子罚（旧行为）
         self.kings = []
         self.flushes = []
         self.bombs = []
@@ -933,10 +942,10 @@ class SortResult:
             wild_items = []
             for g in (list(self.straights) + list(self.boards)
                       + list(self.steels) + list(self.three_with_twos)):
-                wc = sum(1 for c in g.cards if c.is_wild)
-                if wc:
+                lc = sum(1 for c in g.cards if c.is_wild or c.rank == self.level)
+                if lc:
                     wild_items.append({"type": g.group_type,
-                                       "label": f"用癞子{wc}张", "value": wc * 0.8})
+                                       "label": f"用级牌{lc}张", "value": lc * 0.8})
         else:
             penalty_items = bonus_items = wild_items = None
 
@@ -960,14 +969,15 @@ class SortResult:
             + sum(g.size * 0.3 for g in self.steels)
             + sum(g.size * 0.3 for g in self.three_with_twos)
         )
-        # 级牌消耗惩罚：炸弹/同花顺用癞子高回报不罚；低回报牌型每张癞子 +0.8
-        def _wild_penalty(g):
-            return sum(1 for c in g.cards if c.is_wild) * 0.8
+        # 级牌消耗惩罚：级牌 rank（含癞子）消耗在低回报牌型里削弱手牌，每张 +0.8；
+        # 炸弹/同花顺用级牌高回报不罚；level 未知（None）时退化为癞子-only（旧行为）
+        def _level_penalty(g, level):
+            return sum(1 for c in g.cards if c.is_wild or c.rank == level) * 0.8
         wild_cost = (
-            sum(_wild_penalty(g) for g in self.straights)
-            + sum(_wild_penalty(g) for g in self.boards)
-            + sum(_wild_penalty(g) for g in self.steels)
-            + sum(_wild_penalty(g) for g in self.three_with_twos)
+            sum(_level_penalty(g, self.level) for g in self.straights)
+            + sum(_level_penalty(g, self.level) for g in self.boards)
+            + sum(_level_penalty(g, self.level) for g in self.steels)
+            + sum(_level_penalty(g, self.level) for g in self.three_with_twos)
         )
 
         items = None
@@ -992,8 +1002,9 @@ class SortResult:
         #   单张基数从 1.0 提到 1.2：只在综合分接近时偏向"单张少、结构完整"的手牌
         #   （单张≥5 的碎片牌体感差），综合分差距大时炸弹/成型牌型仍优先。
         #
-        # 【级牌消耗惩罚】级牌(癞子牌)是高战斗力牌，消耗在成型牌型中
-        #   会削弱手牌整体牌力。对成型牌型中每张级牌加收额外惩罚。
+        # 【级牌消耗惩罚】级牌（含癞子）是高战斗力牌，消耗在成型牌型中
+        #   会削弱手牌整体牌力。对顺子/木板/钢板/三带二中的每张级牌
+        #   （含自然级牌）加收额外惩罚；炸弹/同花顺高回报不罚。
         # ──────────────────────────────────────────────
         frag_penalty, form_bonus, wild_cost, _ = self._score_parts()
         frag_score = frag_penalty - form_bonus + wild_cost
@@ -1130,7 +1141,7 @@ def get_laizi_limit(key, config=None):
 # ================================================================
 
 def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, order,
-                             laizi_limit=None):
+                             laizi_limit=None, level=None):
     """
     用不限制 budget 的方式跑一次 execute_strategy，
     返回每种牌型实际消耗的癞子数。
@@ -1151,7 +1162,7 @@ def _probe_actual_wild_usage(natural_cards, wild_cards, strategy, bomb_wilds, or
         }
 
     result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
-                              wild_budgets=None, laizi_limit=laizi_limit)  # None = 不限制
+                              wild_budgets=None, laizi_limit=laizi_limit, level=level)  # None = 不限制
     usage = _usage_of(result)
     return usage, result
 
@@ -1241,7 +1252,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
                      extraction_order: tuple,
                      wild_budgets: dict = None,
                      laizi_limit: dict = None,
-                     flush_first: tuple = None) -> SortResult:
+                     flush_first: tuple = None,
+                     level: str = None) -> SortResult:
     """
     执行一种理牌策略。
 
@@ -1284,6 +1296,7 @@ def execute_strategy(natural_cards: list, wild_cards: list,
     flush_cap = _budget("flush")
 
     result = SortResult()
+    result.level = level  # 级牌 rank 字符串；None = 只按癞子罚
     result.kings = extract_king_bombs(pool)
 
     if strategy in ("O_flush_first", "O_flush_single"):
@@ -1316,7 +1329,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
         elif ext_type == "steel":
             result.steels = extract_steel_plates(pool, wp, max_wilds=_budget("steel"))
         elif ext_type == "three_two":
-            result.three_with_twos = extract_three_with_two(pool, wp, max_wilds=_budget("three_two"))
+            result.three_with_twos = extract_three_with_two(pool, wp, level=level,
+                                                            max_wilds=_budget("three_two"))
 
     # 剩余癞子优先用于组炸弹：先用「剩余自然牌 + 剩余癞子」组新炸弹
     # （3张+1癞 / 2张+2癞 / 1张+3癞 / 纯癞子4张），再把残余癞子喂给已有炸弹
@@ -1418,7 +1432,8 @@ def _flush_first_choices(natural_cards: list, wild_cards: list, n_lz: int,
 
 def try_all_strategies(natural_cards: list, wild_cards: list,
                        laizi_limit: dict = None,
-                       fast_mode: bool = None) -> SortResult:
+                       fast_mode: bool = None,
+                       level: str = None) -> SortResult:
     """
     枚举所有策略组合，返回最优。带去重和剪枝。
 
@@ -1426,6 +1441,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                  None 则用全局默认配置。
     fast_mode:   None=自动检测(n_lz≤FAST_WILD_THRESHOLD时快速)，
                  True=强制快速路径，False=强制完整路径。
+    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
     n_lz = len(wild_cards)
     if fast_mode is None:
@@ -1447,7 +1463,7 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
     def try_one(strategy, bomb_wilds, order, budgets, flush_first):
         result = execute_strategy(natural_cards, wild_cards, strategy, bomb_wilds, order,
                                   wild_budgets=budgets, laizi_limit=laizi_limit,
-                                  flush_first=flush_first)
+                                  flush_first=flush_first, level=level)
         _register(result)
 
     def _budgets_equals_usage(budgets, usage):
@@ -1467,7 +1483,8 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                 remaining = n_lz - bomb_wilds
                 for order in orders:
                     usage, probe_result = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit,
+                        level=level)
                     all_budgets = generate_wild_budgets(
                         remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:
@@ -1518,21 +1535,22 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
 
 
 def sort_8laizi(hand_cards: list, laizi_limit: dict = None,
-                fast_mode: bool = None) -> tuple:
+                fast_mode: bool = None, level: str = None) -> tuple:
     """
     一键理牌主入口（兼容 2癞子 / 8癞子）。
-    
+
     返回 (bombs, others):
       bombs  - 王炸 + 同花顺 + 炸弹（炸弹区）
       others - 顺子/木板/钢板/三带二/三张/对子/单张
-    
+
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
+    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
     best = try_all_strategies(natural_cards, wild_cards, laizi_limit=laizi_limit,
-                              fast_mode=fast_mode)
+                              fast_mode=fast_mode, level=level)
 
     if best is None:
         singles = [CardGroup([c], "single", c.power) for c in hand_cards]
@@ -1542,18 +1560,20 @@ def sort_8laizi(hand_cards: list, laizi_limit: dict = None,
 
 
 def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
-                             fast_mode: bool = None) -> dict:
+                             fast_mode: bool = None,
+                             level: str = None) -> dict:
     """
     一键理牌（含详情），供 Web UI 使用（兼容 2癞子 / 8癞子）。
-    
+
     返回 dict:
       all_results: 所有策略结果列表，每个包含 strategy/meta/score/stats/bombs/others/zones
       best_index: 最优结果在 all_results 中的索引
       bombs, others: 最优结果的 bombs/others
       zones: 最优结果的三区划分
-    
+
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
+    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
@@ -1594,7 +1614,7 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
     def _try_and_add(strategy, bomb_wilds, order, budgets, flush_first, label_fn):
         result = execute_strategy(
             natural_cards, wild_cards, strategy, bomb_wilds, order, wild_budgets=budgets,
-            laizi_limit=laizi_limit, flush_first=flush_first)
+            laizi_limit=laizi_limit, flush_first=flush_first, level=level)
         sig = result.score()
         if sig in seen:
             return
@@ -1618,7 +1638,8 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                 remaining = n_lz - bomb_wilds
                 for order in EXTRACTION_ORDERS:
                     usage, probe_result = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit,
+                        level=level)
                     all_budgets = generate_wild_budgets(
                         remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:
@@ -1645,7 +1666,8 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
                 remaining = n_lz - bomb_wilds
                 for order in orders:
                     usage, probe_result = _probe_actual_wild_usage(
-                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit)
+                        natural_cards, wild_cards, strategy, bomb_wilds, order, laizi_limit,
+                        level=level)
                     all_budgets = generate_wild_budgets(
                         remaining, laizi_limit, caps_override=usage, lift_types=lift_types)
                     for budgets in all_budgets:

@@ -244,10 +244,12 @@ def api_sort():
 
     laizi_limit = data.get("laizi_limit")
     wild_mode = data.get("wild_mode", 8)
+    level = data.get("level")  # 级牌 rank；前端传 resolvedLevel；不传则 None → 只按癞子罚（旧行为）
     # 快速/完整路径由后端按实际癞子数自动检测（n_lz ≤ 2 → 快速），
     # 而非按 wild_mode 硬编码：8癞子模式也可能摸到 ≤2 张癞子的牌。
     fast_mode = None
-    result = sort_8laizi_with_details(hand_cards, laizi_limit=laizi_limit, fast_mode=fast_mode)
+    result = sort_8laizi_with_details(hand_cards, laizi_limit=laizi_limit, fast_mode=fast_mode,
+                                      level=level)
     result["best_index"] = 0
     # 为每个 zone 的 cards 添加 hex 编码（直接从 dict 计算，避免重复创建 Card）
     for zone_name, groups in result.get("zones", {}).items():

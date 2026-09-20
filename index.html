@@ -1292,7 +1292,7 @@ function showScoreDetail(result, isBest) {
     <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim);line-height:1.5">
       单张 1.2/张(大牌加重至 1.7)，对子 0.4/张(小对子加重至 0.8)，三张 0.2/张。
       炸弹 线数×1.0 + 牌点微调(±0.4/组)，同花顺 1.1/张，顺子/木板/钢板/三带二 0.3/张。
-      级牌消耗惩罚 0.8/张(仅在顺子/木板/钢板/三带二中)。综合分越低越好。
+      级牌(含癞子)消耗惩罚 0.8/张(仅在顺子/木板/钢板/三带二中)。综合分越低越好。
     </div>
 
     <button class="score-btn-close" onclick="closeScoreDetail()">关闭</button>
@@ -1337,7 +1337,7 @@ async function doSort() {
     const limit = getActiveLimit();
     const resp = await fetch('api/sort?_t=' + Date.now(), {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ cards: currentHand, laizi_limit: limit, wild_mode: currentWildMode })
+      body: JSON.stringify({ cards: currentHand, laizi_limit: limit, wild_mode: currentWildMode, level: resolvedLevel })
     });
     sortResult = await resp.json();
 
