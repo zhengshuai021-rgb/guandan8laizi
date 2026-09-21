@@ -3,7 +3,13 @@
 """
 八癞子掼蛋 Web UI 服务器 — 纯 Flask 壳，所有逻辑在 sort_8laizi 中。
 """
+import os
+import re
+import json
+import secrets
+import string
 import sys
+import time
 from flask import Flask, request, jsonify, send_from_directory, make_response
 
 if sys.platform == 'win32':
@@ -18,6 +24,20 @@ from sort_8laizi import (
 from deal_config import default_config, load_config_from_file, load_config_from_ini_text
 
 app = Flask(__name__, static_folder=None)
+
+# ── 分享链接存储 ──
+SHARE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shareLink")
+_SHARE_CODE_RE = re.compile(r"^[A-Za-z0-9]{4,12}$")
+
+
+def _load_share(code: str):
+    """读取 shareLink/<code>.json，不存在或损坏返回 None（code 已由路由层校验）。"""
+    path = os.path.join(SHARE_DIR, code + ".json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 # Prevent browser from caching ANY API response
 @app.after_request
@@ -268,8 +288,67 @@ def api_sort():
     return jsonify(result)
 
 
+@app.route("/api/share", methods=["POST"])
+def api_share():
+    """创建分享链接：把发牌设定+理牌配置存为 shareLink/<code>.json，返回短码。
+
+    请求 body (JSON):
+      wild_mode: 模式 (2=普通 / 8=八癞子)
+      level:     级牌点数 (str)
+      players:   4 人手牌 [[card...], ...]
+      players_hex / wild_counts / power_evals / compensation_log: 发牌结果展示数据
+      laizi_limit: 癞子预算配置
+      baConfig:   发牌配置
+
+    返回: {ok, code}（前端自行拼接链接，适配 nginx 子路径）。
+    """
+    data = request.get_json() or {}
+    payload = {
+        "v": 1,
+        "created_at": int(time.time()),
+        "wild_mode": data.get("wild_mode"),
+        "level": data.get("level"),
+        "players": data.get("players"),
+        "players_hex": data.get("players_hex"),
+        "wild_counts": data.get("wild_counts"),
+        "power_evals": data.get("power_evals"),
+        "compensation_log": data.get("compensation_log"),
+        "laizi_limit": data.get("laizi_limit"),
+        "baConfig": data.get("baConfig"),
+    }
+    if not payload["players"] or not payload["level"] or payload["wild_mode"] is None:
+        return jsonify({"ok": False, "error": "参数不完整"}), 400
+
+    os.makedirs(SHARE_DIR, exist_ok=True)
+    code = None
+    for _ in range(10):
+        cand = "S" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(7))
+        if not os.path.exists(os.path.join(SHARE_DIR, cand + ".json")):
+            code = cand
+            break
+    if code is None:
+        return jsonify({"ok": False, "error": "生成短码失败"}), 500
+
+    # O_EXCL 原子创建，避免并发同码覆盖
+    fd = os.open(os.path.join(SHARE_DIR, code + ".json"),
+                 os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    return jsonify({"ok": True, "code": code})
+
+
+@app.route("/api/share/<code>", methods=["GET"])
+def api_share_get(code):
+    """读取分享内容；code 严格校验（防路径穿越），不存在/损坏返回 404。"""
+    if not _SHARE_CODE_RE.fullmatch(code):
+        return jsonify({"ok": False, "error": "无效的分享码"}), 404
+    payload = _load_share(code)
+    if payload is None:
+        return jsonify({"ok": False, "error": "分享不存在或已损坏"}), 404
+    return jsonify({"ok": True, "data": payload})
+
+
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5001))
     print(f"Starting 八癞子掼蛋 Web UI at http://127.0.0.1:{port}")
     app.run(host="127.0.0.1", port=port, debug=False)

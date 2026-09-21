@@ -5,3 +5,6 @@ __pycache__/
 
 # Claude Code 本地配置（无需提交）
 .claude/
+
+# 分享链接存储（服务端运行期生成，勿提交）
+shareLink/

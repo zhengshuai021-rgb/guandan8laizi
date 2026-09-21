@@ -497,6 +497,41 @@ body::before {
 .config-modal .config-footer .summary .err { color:#e74c3c; }
 .config-modal .config-footer .summary .ok { color:#4caf50; }
 
+/* ── 分享理牌结果弹窗 ── */
+.share-overlay { display:none; position:fixed; inset:0; z-index:1100;
+  background:rgba(0,0,0,0.7); justify-content:center; align-items:center; }
+.share-overlay.active { display:flex; }
+.share-modal {
+  width:92vw; max-width:620px;
+  background:linear-gradient(160deg, #122a18, #0a1f10);
+  border-radius:12px; border:1px solid var(--gold);
+  box-shadow:0 0 80px rgba(0,0,0,0.7);
+  padding:22px 28px;
+}
+.share-modal h2 {
+  font-family:'Playfair Display',serif; color:var(--gold-light);
+  font-size:1.1rem; margin:0 0 6px 0;
+}
+.share-modal .share-desc { font-size:0.8rem; color:var(--text-dim); margin:0 0 14px 0; }
+.share-code-row {
+  display:flex; align-items:center; gap:12px; margin:10px 0 6px 0;
+  padding:10px 14px; background:rgba(0,0,0,0.4); border-radius:6px;
+  border:1px solid rgba(212,168,67,0.25);
+}
+.share-code-label { font-size:0.75rem; color:var(--text-dim); white-space:nowrap; }
+.share-code { font-family:'Courier New',monospace; font-size:1.05rem; color:var(--gold-light); letter-spacing:2px; }
+.share-link-box {
+  display:flex; align-items:center; gap:10px; margin:8px 0 6px 0;
+  background:rgba(0,0,0,0.4); border-radius:6px; padding:8px 12px;
+  border:1px solid rgba(212,168,67,0.2);
+}
+.share-link-box input {
+  flex:1; background:transparent; border:none; outline:none;
+  color:rgba(255,255,255,0.85); font-size:0.78rem;
+  font-family:'Courier New',monospace; word-break:break-all;
+}
+.share-btn-row { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+
 /* ── 癞子预算配置（三态：不限/禁用/最多N）── */
 .limit-row {
   padding: 12px 0;
@@ -783,6 +818,7 @@ body::before {
     <div class="ba-comp-log" id="baCompLog" style="display:none"></div>
     <div id="baSortBtnRow" style="display:none;text-align:center;margin-top:12px">
       <button class="btn primary" onclick="baSortCurrent()">✦ 理牌当前玩家</button>
+      <button class="btn" id="btnShare" onclick="shareSortResult()" disabled>🔗 分享理牌结果</button>
     </div>
   </div>
 
@@ -907,6 +943,25 @@ body::before {
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ── 分享理牌结果弹窗 ── -->
+<div class="share-overlay" id="shareOverlay">
+  <div class="share-modal">
+    <h2>🔗 分享理牌结果</h2>
+    <p class="share-desc">链接包含：模式、级牌、4家手牌、癞子预算与发牌配置。对方打开后会自动还原并重新理牌。</p>
+    <div class="share-code-row">
+      <span class="share-code-label">分享码</span>
+      <span class="share-code" id="shareCode"></span>
+    </div>
+    <div class="share-link-box">
+      <input id="shareLinkInput" type="text" readonly onclick="this.select()" />
+      <button class="hex-copy" onclick="copyShareLink(this)">复制链接</button>
+    </div>
+    <div class="share-btn-row">
+      <button class="btn" onclick="closeShare()">关闭</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── 八红桃发牌配置弹窗 ── -->
 <div class="config-overlay" id="dealBaOverlay">
@@ -1360,6 +1415,7 @@ async function doSort() {
     document.getElementById('infoStrats').textContent = sortResult.all_results.length;
     const best = sortResult.all_results[0];
     document.getElementById('infoBestSingles').textContent = best.stats.single;
+    document.getElementById('btnShare').disabled = false;
     showToast(`理牌完成！最优方案: ${best.stats.single}张单牌`);
   } catch(e) {
     showToast('理牌失败: ' + e.message);
@@ -1525,6 +1581,7 @@ function doClear() {
   document.getElementById('sortHexText').textContent = '';
   document.getElementById('infoBar').style.display = 'none';
   document.getElementById('btnSort').disabled = true;
+  document.getElementById('btnShare').disabled = true;
   document.getElementById('zones').innerHTML = '';
   document.getElementById('stratBody').innerHTML = '';
   showToast('桌面已清空');
@@ -2293,8 +2350,116 @@ function baSortCurrent() {
   doSort();
 }
 
+// ── 分享理牌结果 ──
+function shareSortResult() {
+  if (!baDealResult || !baDealResult.players || !sortResult) {
+    showToast('请先发牌并完成理牌');
+    return;
+  }
+  const payload = {
+    wild_mode: currentWildMode,
+    level: resolvedLevel,
+    players: baDealResult.players,
+    players_hex: baDealResult.players_hex,
+    wild_counts: baDealResult.wild_counts,
+    power_evals: baDealResult.power_evals,
+    compensation_log: baDealResult.compensation_log || [],
+    laizi_limit: getActiveLimit(),
+    baConfig: baConfig || null,
+  };
+  fetch('api/share?_t=' + Date.now(), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(resp => resp.json()).then(data => {
+    if (!data.ok) throw new Error(data.error || '分享失败');
+    const url = location.origin + location.pathname + '?share=' + data.code;
+    document.getElementById('shareCode').textContent = data.code;
+    document.getElementById('shareLinkInput').value = url;
+    document.getElementById('shareOverlay').classList.add('active');
+  }).catch(e => {
+    showToast('分享失败: ' + e.message);
+  });
+}
+
+function copyShareLink(btn) {
+  const input = document.getElementById('shareLinkInput');
+  input.select();
+  input.setSelectionRange(0, 999999);
+  let done = false;
+  try { done = document.execCommand('copy'); } catch(e) {}
+  if (!done && navigator.clipboard) {
+    navigator.clipboard.writeText(input.value).catch(() => {});
+  }
+  btn.textContent = '已复制 ✓';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = '复制链接'; btn.classList.remove('copied'); }, 1600);
+}
+
+function closeShare() {
+  document.getElementById('shareOverlay').classList.remove('active');
+}
+
+// 打开带 ?share= 的链接：还原输入并自动重新理牌
+async function restoreShare(code) {
+  try {
+    const resp = await fetch('api/share/' + encodeURIComponent(code) + '?_t=' + Date.now(), { cache: 'no-store' });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error((data && data.error) || '分享不存在');
+    const d = data.data;
+    if (!d || !d.players || !d.players[0]) throw new Error('分享数据不完整');
+
+    // 还原发牌配置（仅内存态，不写 localStorage，不污染本机配置）
+    baConfig = d.baConfig || { ...BA_DEFAULTS };
+    if (!baConfig.tiers) baConfig.tiers = JSON.parse(JSON.stringify(BA_DEFAULT_TIERS));
+    if (!baConfig.scores) baConfig.scores = { ...BA_DEFAULT_SCORES };
+    currentWildMode = d.wild_mode;
+    resolvedLevel = d.level;
+    currentLevel = d.level;
+
+    // 还原癞子预算（合并默认，保留 999 语义；不写 localStorage）
+    laiziLimitConfig = { ...LIMIT_DEFAULTS, ...(d.laizi_limit || {}) };
+
+    // 构造发牌结果
+    baDealResult = {
+      players: d.players,
+      players_hex: d.players_hex || d.players.map(() => ''),
+      wild_counts: d.wild_counts || d.players.map(p => p.filter(c => c.is_wild).length),
+      power_evals: d.power_evals || d.players.map(() => ({ score: '-', details: {} })),
+      compensation_log: d.compensation_log || [],
+      wild_mode: d.wild_mode,
+    };
+    baActiveSeat = 0;
+    currentHand = d.players[0];
+
+    // 渲染
+    renderBaTabs();
+    renderBaPlayer(0);
+    document.getElementById('baSortBtnRow').style.display = 'block';
+    document.getElementById('btnSort').disabled = false;
+    document.getElementById('infoBar').style.display = 'flex';
+    document.getElementById('infoLevel').textContent = resolvedLevel;
+    document.getElementById('infoWild').textContent = baDealResult.wild_counts[0];
+    document.getElementById('infoNat').textContent = 27 - baDealResult.wild_counts[0];
+    document.getElementById('infoStrats').textContent = '-';
+    document.getElementById('infoBestSingles').textContent = '-';
+    document.getElementById('zonesContainer').style.display = 'none';
+    document.getElementById('stratsContainer').style.display = 'none';
+    sortResult = null;
+    showToast('已从分享链接还原，正在自动理牌…');
+    await doSort();   // doSort 自带 loading/按钮状态管理，完成后会 enable 分享按钮
+  } catch(e) {
+    showToast('分享链接还原失败: ' + e.message);
+  }
+}
+
 // 页面加载时初始化发牌配置
 loadBaConfig();
+
+// 若地址栏带 ?share=code，自动还原分享
+(function() {
+  const code = new URLSearchParams(location.search).get('share');
+  if (code && /^[A-Za-z0-9]{4,12}$/.test(code)) restoreShare(code);
+})();
 </script>
 </body>
 </html>
