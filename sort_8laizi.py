@@ -514,10 +514,36 @@ def extract_flush_straights(pool: list, wild_pool: list,
 #  顺子提取
 # ================================================================
 
-def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list:
+# 顺子窗口的「拆组代价」：拆三张最贵、拆对子次之、消耗孤张最便宜。
+# 同样 5 连（癞子消耗相同）时优先把废牌顺出去，别把 AAA/999 这类还能组
+# 三带二/钢板的三张拆进顺子（例：A2345 与 23456 都成立时选 23456，A 留给 AAA）。
+STRAIGHT_RANK_COST = {1: 0, 2: 1, 3: 3}
+STRAIGHT_RANK_COST_MAX = 6   # ≥4 张（理论上已当炸弹提前提走）
+
+
+def _straight_window_eval(rank_cnt: dict, ranks: list) -> tuple:
+    """窗口评估：返回 (需要癞子数, 拆组代价)。ranks 为该窗口的 5 个点数。"""
+    need = 0
+    cost = 0
+    for r in ranks:
+        c = rank_cnt.get(r, 0)
+        if c == 0:
+            need += 1
+        else:
+            cost += STRAIGHT_RANK_COST.get(c, STRAIGHT_RANK_COST_MAX)
+    return need, cost
+
+
+def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999,
+                      reserve_ranks: set = None) -> list:
     """贪心提顺子（恰好5张连续，不限花色）。用癞子补断口。
     掼蛋顺子只能是5连张。支持A作为高牌（10-J-Q-K-A）。
-    max_wilds: 最多用多少个癞子做顺子。"""
+    max_wilds: 最多用多少个癞子做顺子。
+    reserve_ranks: 这些点数不参与顺子（用于「A 保留」兜底，见 execute_strategy）。
+
+    选窗规则：先比癞子消耗，再比「拆组代价」（见 _straight_window_eval，
+    孤张 < 拆对子 < 拆三张），最后才比起点大小。这样 A2345 与 23456 都能组时
+    优先保 A（留给 AAA / 三带二），除非 A 已经是废牌。"""
     straights = []
     rank_cnt = rank_counts(pool)
     rank_idx = _build_rank_index(pool)
@@ -532,37 +558,30 @@ def extract_straights(pool: list, wild_pool: list, max_wilds: int = 999) -> list
 
         n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
 
-        # 搜索所有恰好5连续的窗口（普通 + Ace高牌）
-        best = None  # (start_idx, needed_wilds, is_ace_high)
-
-        # 普通5连
-        for i in range(len(available)):
-            start_r = available[i]
+        # 枚举所有恰好5连续的窗口（普通 + Ace 高牌），按 (癞子, 拆组代价, 起点) 取最优
+        candidates = []  # (needed, cost, si, is_ace_high)
+        for start_r in available:
             si = RANK_ORDER[start_r]
-            if si > 8:  # 最高从9开始(9,J,Q,K,?)，10开始只能到A(高牌)
-                # 尝试A高牌：10-J-Q-K-A
-                if si == 9:  # 10
-                    needed = sum(1 for ri in [9,10,11,12] if rank_cnt.get(RANKS[ri], 0) == 0)
-                    if rank_cnt.get("A", 0) == 0:
-                        needed += 1
-                    if needed <= n_wilds:
-                        if best is None or needed < best[1]:
-                            best = (i, needed, True)
-                continue
-            # 需要 available 中有连续的5个rank
-            ranks_needed = [RANKS[si + j] for j in range(5)]
-            # 检查这5个rank是否都在available中（用rank_cnt检查，因为有癞子可以补）
-            needed = sum(1 for r in ranks_needed if rank_cnt.get(r, 0) == 0)
-            if needed <= n_wilds:
-                if best is None or needed < best[1]:
-                    best = (i, needed, False)
+            if si <= 8:
+                window = [RANKS[si + j] for j in range(5)]
+                if reserve_ranks and any(r in reserve_ranks for r in window):
+                    continue
+                need, cost = _straight_window_eval(rank_cnt, window)
+                if need <= n_wilds:
+                    candidates.append((need, cost, si, False))
+            elif si == 9:  # 10 起只能走 A 高牌：10-J-Q-K-A
+                window = [RANKS[9 + j] for j in range(4)] + ["A"]
+                if reserve_ranks and any(r in reserve_ranks for r in window):
+                    continue
+                need, cost = _straight_window_eval(rank_cnt, window)
+                if need <= n_wilds:
+                    candidates.append((need, cost, si, True))
 
-        if best is None:
+        if not candidates:
             break
 
-        si, needed, is_ace_high = best
-        start_r = available[si]
-        si_idx = RANK_ORDER[start_r]
+        needed, _cost, si_idx, is_ace_high = min(
+            candidates, key=lambda x: (x[0], x[1], x[2]))
 
         # 提取（使用 rank_idx 替代 next(... for x in pool ...)）
         taken = []
@@ -1312,15 +1331,16 @@ def generate_wild_budgets(n_remaining, config=None, caps_override=None, lift_typ
 #  执行一种策略
 # ================================================================
 
-def execute_strategy(natural_cards: list, wild_cards: list,
-                     strategy: str, bomb_wilds: int,
-                     extraction_order: tuple,
-                     wild_budgets: dict = None,
-                     laizi_limit: dict = None,
-                     flush_first: tuple = None,
-                     level: str = None) -> SortResult:
+def _execute_strategy_once(natural_cards: list, wild_cards: list,
+                           strategy: str, bomb_wilds: int,
+                           extraction_order: tuple,
+                           wild_budgets: dict = None,
+                           laizi_limit: dict = None,
+                           flush_first: tuple = None,
+                           level: str = None,
+                           straight_reserve: set = None) -> SortResult:
     """
-    执行一种理牌策略。
+    执行一种理牌策略（单次，不含「A 保留」兜底，兜底见 execute_strategy）。
 
     strategy:
       "O_flush_first"  - 同花顺先于炸弹
@@ -1388,7 +1408,8 @@ def execute_strategy(natural_cards: list, wild_cards: list,
 
     for ext_type in extraction_order:
         if ext_type == "straight":
-            result.straights = extract_straights(pool, wp, max_wilds=_budget("straight"))
+            result.straights = extract_straights(pool, wp, max_wilds=_budget("straight"),
+                                                 reserve_ranks=straight_reserve)
         elif ext_type == "board":
             result.boards = extract_boards(pool, wp, max_wilds=_budget("board"))
         elif ext_type == "steel":
@@ -1413,6 +1434,41 @@ def execute_strategy(natural_cards: list, wild_cards: list,
     result.triples, result.pairs, result.singles = extract_remaining(pool, wp)
 
     return result
+
+
+def execute_strategy(natural_cards: list, wild_cards: list,
+                     strategy: str, bomb_wilds: int,
+                     extraction_order: tuple,
+                     wild_budgets: dict = None,
+                     laizi_limit: dict = None,
+                     flush_first: tuple = None,
+                     level: str = None) -> SortResult:
+    """执行一种理牌策略（含「A 保留」兜底）。
+
+    顺子选窗已有拆组代价启发式（extract_straights），但少数手牌仍会把 A 顺进
+    A2345。当 A 有 ≥3 张、且本次提取确实用掉了 A 时，再跑一次「A 不进顺子」
+    的变体，按分数取优，避免 AAA 被拆散、AAA+33 这类三带二漏解。
+    """
+    result = _execute_strategy_once(
+        natural_cards, wild_cards, strategy, bomb_wilds, extraction_order,
+        wild_budgets=wild_budgets, laizi_limit=laizi_limit,
+        flush_first=flush_first, level=level)
+
+    if _should_try_reserve_a(natural_cards, result):
+        alt = _execute_strategy_once(
+            natural_cards, wild_cards, strategy, bomb_wilds, extraction_order,
+            wild_budgets=wild_budgets, laizi_limit=laizi_limit,
+            flush_first=flush_first, level=level, straight_reserve={"A"})
+        if alt.score() < result.score():
+            return alt
+    return result
+
+
+def _should_try_reserve_a(natural_cards: list, result: SortResult) -> bool:
+    """A 有 ≥3 张（AAA 潜力）且本次提取把 A 用进了顺子 → 值得再试「A 保留」。"""
+    if sum(1 for c in natural_cards if c.rank == "A") < 3:
+        return False
+    return any(any(c.rank == "A" for c in g.cards) for g in result.straights)
 
 
 def _boost_best_group_with_leftover_wilds(wild_pool: list, bombs: list,
@@ -2764,6 +2820,43 @@ def test_random():
     print_result(cards, bombs, others)
 
 
+def test_straight_window_pick():
+    """顺子选窗：保 A 组 23456/78910J，不把 AAA 拆进 A2345，并保留 AAA+33。"""
+    print("\n" + "=" * 65)
+    print("  Test straight window: keep AAA, prefer 23456 over A2345")
+
+    suit_map = {1: "D", 2: "C", 3: "H", 4: "S", 5: "X"}
+    rank_map = {1: "A", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8",
+                9: "9", 10: "10", 11: "J", 12: "Q", 13: "K", 14: "SJ", 15: "BJ"}
+    case = ("0x5E,0x15,0x41,0x31,0x21,0x23,0x13,0x2C,0x3B,0x4A,0x49,0x38,0x1C,0x3B,0x3A,"
+            "0x29,0x38,0x1B,0x2A,0x29,0x28,0x17,0x36,0x35,0x44,0x43,0x12")
+
+    def build():
+        toks = [int(t.strip(), 16) for t in case.split(",")]
+        return [Card(suit_map[(v >> 4) & 0xF], rank_map[v & 0xF], cid=i)
+                for i, v in enumerate(toks)]
+
+    best = sort_8laizi_with_details(build(), level=None)["all_results"][0]
+    zone = best["zones"]
+
+    def ranks(z, t):
+        return sorted("".join(sorted(c["rank"] for c in g["cards"]))
+                      for g in zone[z] if g["group_type"] == t)
+
+    assert ranks("sortR", "straight") == ["10789J", "1089JQ", "1089JQ", "23456"], \
+        f"顺子选窗错误: {ranks('sortR', 'straight')}"
+    assert ranks("sortR", "three_two") == ["33AAA"], f"三带二错误: {ranks('sortR', 'three_two')}"
+    assert sorted(c["rank"] for g in zone["notsort"] if g["group_type"] == "single"
+                  for c in g["cards"]) == ["5", "SJ"], "单张应为 5 / 小王"
+
+    # 「A 保留」兜底：reserve_ranks={"A"} 时顺子里不允许出现 A
+    strs = extract_straights(build(), [], reserve_ranks={"A"})
+    assert len(strs) == 4 and all(not any(c.rank == "A" for c in g.cards) for g in strs), \
+        f"A 保留后顺子异常: {[str(g) for g in strs]}"
+
+    print("  All straight-window assertions passed.")
+
+
 def test_deal_ba_1():
     """Test Deal Ba 1: 八红桃发牌基本流程 + 不变量校验"""
     print("\n" + "=" * 65)
@@ -2921,6 +3014,7 @@ def main():
     test_4()
     test_5()
     test_three_with_two_rules()
+    test_straight_window_pick()
     test_random()
 
     # 八红桃发牌测试
