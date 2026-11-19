@@ -68,7 +68,15 @@ _card_cid_lock = threading.Lock()
 class Card:
     __slots__ = ('suit', 'rank', 'is_wild', 'power', 'value', 'cid', 'used')
 
-    def __init__(self, suit: str, rank: str, is_wild: bool = False, cid: int = None):
+    def __init__(self, suit: str, rank: str, is_wild: bool = False, cid: int = None,
+                 level: str = None):
+        """level: 级牌 rank。
+
+        级牌（无论是否癞子）是掼蛋里最大的自然牌力，因此自然级牌的 power
+        直接取 WILD_POWER(15)，与 A(14) 区分开；level=None 时退化为旧口径
+        （只有癞子 power=15，自然级牌按点数算）。理牌入口另有
+        apply_level_power() 统一校准，外部构造的 Card 也能修正。
+        """
         global _card_cid_counter
         self.suit = suit
         self.rank = rank
@@ -91,7 +99,8 @@ class Card:
             self.value = 17
         else:
             self.value = RANK_VALUE.get(rank, 0)
-            self.power = self.value
+            self.power = (WILD_POWER if (level is not None and rank == str(level))
+                          else self.value)
 
     def __repr__(self):
         if self.is_wild:
@@ -168,6 +177,35 @@ def naturals_only(cards: list) -> list:
 
 def wilds_only(cards: list) -> list:
     return [c for c in cards if c.is_wild]
+
+
+def apply_level_power(cards: list, level: str = None):
+    """按级牌口径刷新手牌每张牌的 power（幂等，可重复调用）。
+
+    掼蛋里级牌（含癞子）是最大的自然牌力，但 Card 构造时未必知道 level
+    （如 Web 端从 JSON 重建、测试用例 build_hand），因此理牌入口统一校准：
+    自然级牌 power = WILD_POWER(15)，其余牌按点数，大小王仍为 16/17。
+    level=None 时恢复旧口径（只有癞子 power=15），便于回退对比。
+    """
+    lvl = str(level) if level is not None else None
+    for c in cards:
+        if c.is_wild:
+            c.power = WILD_POWER
+        elif c.rank == "SJ":
+            c.power = SMALL_JOKER_POWER
+        elif c.rank == "BJ":
+            c.power = BIG_JOKER_POWER
+        elif lvl is not None and c.rank == lvl:
+            c.power = WILD_POWER
+        else:
+            c.power = c.value
+
+
+def rank_power(rank: str, level: str = None) -> int:
+    """rank 的牌力：级牌 rank 取最高自然牌力，其余按点数（与 apply_level_power 同口径）。"""
+    if level is not None and rank == str(level):
+        return WILD_POWER
+    return RANK_VALUE.get(rank, 0)
 
 
 def _mark_used(cards: list):
@@ -714,53 +752,80 @@ def extract_steel_plates(pool: list, wild_pool: list, max_wilds: int = 999) -> l
 #  三带二提取
 # ================================================================
 
+# 三带二整组最多允许的级牌张数（含癞子）。达到 3 张即不组——
+# 级牌三张 / 级牌炸弹 / 含 3 张癞子的组合都留作独立牌型，避免把最高牌力
+# 消耗在低回报的 5 张牌里。
+THREE_TWO_MAX_LEVEL_CARDS = 2
+
+
 def extract_three_with_two(pool: list, wild_pool: list,
                            max_pair_value: int = 14,
                            max_wilds: int = 999,
                            level: str = None) -> list:
     """贪心提三带二（三张+对子，对子点数<=max_pair_value即不超过A）。
+
     max_wilds: 最多用多少个癞子做三带二。
-    level: 级牌 rank（如 '3'）；有值时对子选择优先避开级牌 rank——
-          自然级牌高牌力（power=15），尽量不消耗在低回报的三带二对子里。"""
+    level: 级牌 rank（如 '3'）；有值时：
+      1) 牌力按「级牌最高」计算（自然级牌 power=15，见 apply_level_power）；
+      2) 配对按点数顺序一一对应（小 3 带小对、大 3 带大对）：
+         三张按「省癞子 → 点数小优先」处理；对子按「现成对子 → 拆三张 → 借癞子，
+         同档点数小优先」带。对子不参与三带二的牌力，所以先消耗弱对子、
+         把强对子留作独立对子；
+      3) 级牌的三张 / 三张以上组合不参与三带二（THREE_TWO_MAX_LEVEL_CARDS）：
+         级牌三张、级牌炸弹、以及含 ≥3 张级牌（含癞子）的候选组都跳过。
+    """
     twt_list = []
     rank_cnt = rank_counts(pool)
     wilds_used = 0
+    lvl = str(level) if level is not None else None
+
+    def _is_level(rank):
+        return lvl is not None and rank == lvl
 
     while True:
         n_wilds = min(len(_active_wilds(wild_pool)), max_wilds - wilds_used)
-        # 找可用的三张rank
+        # 三张候选：先省癞子（张数多优先），同档内点数小优先——小 3 先配小对。
+        # 级牌 rank 直接排除——三张级牌就是「级牌三张」，不参与三带二。
         triple_candidates = sorted(
-            [(r, c) for r, c in rank_cnt.items() if c + n_wilds >= 3 and c > 0],
-            key=lambda x: (-x[1], -RANK_VALUE.get(x[0], 0))
+            [(r, c) for r, c in rank_cnt.items()
+             if c + n_wilds >= 3 and c > 0 and not _is_level(r)],
+            key=lambda x: (max(0, 3 - x[1]), rank_power(x[0], lvl))
         )
         if not triple_candidates:
             break
 
         tr, tcnt = triple_candidates[0]
+        # tr 已排除级牌 rank，三张里的级牌只可能是补位癞子
         need_triple = max(0, 3 - tcnt)
 
-        # 找可用的对子rank（排除三张rank自身，除非cnt>3）
-        # 优先选恰好2张的rank（不浪费），再从小牌开始带（小对子先用）；
-        # level 已知时额外优先避开级牌 rank——自然级牌是最高自然牌力，
-        # 优先带非级牌对子（如 A），把级牌留着组大牌型/炸弹。
+        # 对子候选：优先「现成对子」（不拆三张、不耗癞子），同档内点数小优先
+        # （小对子先被带走，强对子留作独立对子）。
+        # 档位：0=恰好 2 张 | 1=拆三张 | 2=要借癞子；级牌牌力最高 → 级牌对子排在最后。
+        # 级牌 rank 若已有 ≥3 张（级牌三张/炸弹）也不拆——只允许整对参与。
         pair_candidates = sorted(
             [(r, c) for r, c in rank_cnt.items()
              if c + n_wilds >= 2 and c > 0
              and RANK_VALUE.get(r, 0) <= max_pair_value
-             and (r != tr or c > 3)],
-            key=lambda x: (0 if x[1] == 2 else 1, -x[1],
-                           x[0] == str(level) if level else False,
-                           RANK_VALUE.get(x[0], 0))
+             and (r != tr or c > 3)
+             and not (_is_level(r) and c >= 3)],
+            key=lambda x: (0 if x[1] == 2 else (1 if x[1] >= 3 else 2),
+                           rank_power(x[0], lvl))
         )
-        if not pair_candidates:
-            break
 
-        pr, pcnt = pair_candidates[0]
-        need_pair = max(0, 2 - pcnt)
-
-        total_need = need_triple + need_pair
-        if total_need > n_wilds:
+        # 按上述顺序逐个试：既要落在癞子预算内，也不能让整组级牌数超上限
+        chosen = None
+        for pr, pcnt in pair_candidates:
+            need_pair = max(0, 2 - pcnt)
+            if need_triple + need_pair > n_wilds:
+                continue
+            pair_level = 2 if _is_level(pr) else need_pair
+            if need_triple + pair_level > THREE_TWO_MAX_LEVEL_CARDS:
+                continue
+            chosen = (pr, pcnt, need_pair)
             break
+        if chosen is None:
+            break
+        pr, pcnt, need_pair = chosen
 
         # 提取三张（防御上限 3 张：正常流程中 ≥4 张同 rank 已在 extract_bombs
         # Phase 0 被提走，tcnt ≤ 3；若未来提取顺序变化导致 tcnt > 3，
@@ -1441,8 +1506,11 @@ def try_all_strategies(natural_cards: list, wild_cards: list,
                  None 则用全局默认配置。
     fast_mode:   None=自动检测(n_lz≤FAST_WILD_THRESHOLD时快速)，
                  True=强制快速路径，False=强制完整路径。
-    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
+    level:       级牌 rank 字符串；用于级牌牌力(15)与级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
+    # 直接调用本函数（不经 sort_8laizi*）时也要校准级牌牌力
+    apply_level_power(natural_cards, level)
+    apply_level_power(wild_cards, level)
     n_lz = len(wild_cards)
     if fast_mode is None:
         fast_mode = (n_lz <= FAST_WILD_THRESHOLD)
@@ -1545,8 +1613,9 @@ def sort_8laizi(hand_cards: list, laizi_limit: dict = None,
 
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
-    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
+    level:       级牌 rank 字符串；用于级牌牌力(15)与级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
+    apply_level_power(hand_cards, level)
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
     best = try_all_strategies(natural_cards, wild_cards, laizi_limit=laizi_limit,
@@ -1573,8 +1642,9 @@ def sort_8laizi_with_details(hand_cards: list, laizi_limit: dict = None,
 
     laizi_limit: 人为约束每种牌型的癞子上限（见 LAIZI_LIMIT_CONFIG_DEFAULT）。
     fast_mode:   None=自动检测(n_lz≤2时快速)，True/False=强制模式。
-    level:       级牌 rank 字符串；用于级牌消耗惩罚（含自然级牌），None=只按癞子罚。
+    level:       级牌 rank 字符串；用于级牌牌力(15)与级牌消耗惩罚（含自然级牌），None=只按癞子罚。
     """
+    apply_level_power(hand_cards, level)
     wild_cards = wilds_only(hand_cards)
     natural_cards = naturals_only(hand_cards)
     n_lz = len(wild_cards)
@@ -1814,7 +1884,7 @@ def deal_random_hand(level: str = "2", seed: int = None) -> list:
 
     cards = []
     for i, (suit, rank, is_wild) in enumerate(hand):
-        cards.append(Card(suit, rank, is_wild=is_wild, cid=i))
+        cards.append(Card(suit, rank, is_wild=is_wild, cid=i, level=level))
     return cards
 
 
@@ -1823,7 +1893,7 @@ def build_full_deck_cards(level: str = "2", wild_mode: int = 8) -> list:
     deck_specs = build_full_deck(level, wild_mode=wild_mode)
     cards = []
     for i, (suit, rank, is_wild) in enumerate(deck_specs):
-        cards.append(Card(suit, rank, is_wild=is_wild, cid=i))
+        cards.append(Card(suit, rank, is_wild=is_wild, cid=i, level=level))
     return cards
 
 
@@ -2631,6 +2701,57 @@ def test_5():
     print_result(cards, bombs, others)
 
 
+def test_three_with_two_rules():
+    """三带二规则回归：小带小/大带大 / 级牌三张及以上不参与 / 级牌牌力归一。"""
+    print("\n" + "=" * 65)
+    print("  Test 3+2 rules: weak-pair-first, level-card caps, level power")
+
+    def nat(rank, n):
+        return [Card("S", rank, cid=i) for i in range(n)]
+
+    def wilds(n):
+        return [Card("H", "2", is_wild=True, cid=100 + i) for i in range(n)]
+
+    def pairs(groups):
+        return [sorted(c.rank for c in g.cards if not c.is_wild) for g in groups]
+
+    # ① 小 3 带小对、大 3 带大对：555 带 44，KKK 带 AA
+    g = extract_three_with_two(nat("K", 3) + nat("5", 3) + nat("A", 2) + nat("4", 2),
+                              [], level="3")
+    got = {tuple(sorted(c.rank for c in grp.cards)) for grp in g}
+    assert ("4", "4", "5", "5", "5") in got and ("A", "A", "K", "K", "K") in got, \
+        f"小带小/大带大失败: {pairs(g)}"
+
+    # ② 只有一个小三张时，带走最小的对子（222+66，留下 1010）
+    pool = nat("2", 3) + nat("6", 2) + nat("10", 2)
+    g = extract_three_with_two(pool, [], level="3")
+    assert len(g) == 1 and sorted(c.rank for c in g[0].cards) == ["2", "2", "2", "6", "6"], \
+        f"小三张应带小对子: {pairs(g)}"
+    assert sorted(c.rank for c in pool if not c.used) == ["10", "10"], "应把 1010 留作独立对子"
+
+    # ③ 级牌三张不参与（也不被拆成对子）
+    g = extract_three_with_two(nat("K", 3) + nat("3", 3), [], level="3")
+    assert not g, f"级牌三张不应参与三带二: {pairs(g)}"
+
+    # ④ 整组 ≥3 张级牌不组（三张 1 癞 + 级牌对子 = 3 张级牌）
+    g = extract_three_with_two(nat("K", 2) + nat("3", 2), wilds(1), level="3")
+    assert not g, f"3 张级牌不应组三带二: {pairs(g)}"
+
+    # ⑤ 整组 2 张级牌可以组（三张 1 癞 + 非级牌对子 = 1 张级牌）
+    g = extract_three_with_two(nat("K", 2) + nat("4", 2), wilds(1), level="3")
+    assert len(g) == 1, f"2 张级牌应可组三带二: {pairs(g)}"
+
+    # ⑥ 级牌牌力归一为 15（构造与入口校准两条路径）
+    c = Card("S", "3", cid=0, level="3")
+    assert c.power == WILD_POWER, f"Card(level) power 应为 15，实际 {c.power}"
+    apply_level_power([c], None)
+    assert c.power == 3, f"level=None 应恢复点数牌力，实际 {c.power}"
+    apply_level_power([c], "3")
+    assert c.power == WILD_POWER, f"apply_level_power 未生效，实际 {c.power}"
+
+    print("  All 3+2 / level-power assertions passed.")
+
+
 def test_random():
     """随机手牌测试（模拟真实发牌）"""
     print("\n" + "=" * 65)
@@ -2799,6 +2920,7 @@ def main():
     test_3()
     test_4()
     test_5()
+    test_three_with_two_rules()
     test_random()
 
     # 八红桃发牌测试
